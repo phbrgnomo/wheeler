@@ -484,7 +484,7 @@ func (s *Server) symbolUpdatePriceHandler(w http.ResponseWriter, r *http.Request
 	defer cancel()
 
 	// Update symbol price using Polygon service
-	err := s.polygonService.UpdateSymbolPrice(ctx, symbol)
+	err := s.providerService.UpdateSymbolPrice(ctx, symbol)
 	
 	response := map[string]interface{}{
 		"success": err == nil,
@@ -519,7 +519,7 @@ func (s *Server) symbolFetchDividendsHandler(w http.ResponseWriter, r *http.Requ
 	defer cancel()
 
 	// Fetch dividend data using Polygon service
-	dividends, err := s.polygonService.FetchDividendHistory(ctx, symbol, 10)
+	dividends, err := s.providerService.FetchDividendHistory(ctx, symbol, 10)
 	
 	response := map[string]interface{}{
 		"success": err == nil,

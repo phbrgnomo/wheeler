@@ -23,7 +23,7 @@ func (s *Server) polygonTestHandler(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// Test the connection
-	err := s.polygonService.TestConnection(ctx)
+	err := s.providerService.TestConnection(ctx)
 	
 	response := map[string]interface{}{
 		"success": err == nil,
@@ -81,7 +81,7 @@ func (s *Server) polygonUpdatePricesHandler(w http.ResponseWriter, r *http.Reque
 		log.Printf("[POLYGON API] Updating prices for %d symbols (prioritized order)", len(symbols))
 
 		for _, symbol := range symbols {
-			if err := s.polygonService.UpdateSymbolPrice(ctx, symbol); err != nil {
+			if err := s.providerService.UpdateSymbolPrice(ctx, symbol); err != nil {
 				log.Printf("[POLYGON API] Failed to update %s: %v", symbol, err)
 				errors = append(errors, symbol+": "+err.Error())
 				failed++
@@ -97,7 +97,7 @@ func (s *Server) polygonUpdatePricesHandler(w http.ResponseWriter, r *http.Reque
 		log.Printf("[POLYGON API] Updating prices for specific symbols: %v", request.Symbols)
 
 		for _, symbol := range request.Symbols {
-			if err := s.polygonService.UpdateSymbolPrice(ctx, symbol); err != nil {
+			if err := s.providerService.UpdateSymbolPrice(ctx, symbol); err != nil {
 				log.Printf("[POLYGON API] Failed to update %s: %v", symbol, err)
 				errors = append(errors, symbol+": "+err.Error())
 				failed++
@@ -157,7 +157,7 @@ func (s *Server) polygonSymbolInfoHandler(w http.ResponseWriter, r *http.Request
 	defer cancel()
 
 	// Get symbol info from Polygon
-	info, err := s.polygonService.FetchSymbolDetails(ctx, symbol)
+	info, err := s.providerService.FetchSymbolDetails(ctx, symbol)
 	if err != nil {
 		log.Printf("[POLYGON API] Error getting symbol info for %s: %v", symbol, err)
 		response := map[string]interface{}{
@@ -171,7 +171,7 @@ func (s *Server) polygonSymbolInfoHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Get dividend history (optional)
-	dividends, err := s.polygonService.FetchDividendHistory(ctx, symbol, 5)
+	dividends, err := s.providerService.FetchDividendHistory(ctx, symbol, 5)
 	if err != nil {
 		log.Printf("[POLYGON API] Warning: failed to get dividend history for %s: %v", symbol, err)
 		// Continue without dividends
@@ -201,14 +201,14 @@ func (s *Server) polygonStatusHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := s.polygonService.GetAPIKeyStatus()
+	status := s.providerService.GetAPIKeyStatus()
 
 	// Test connection if API key is configured
 	if status.Configured {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		if err := s.polygonService.TestConnection(ctx); err != nil {
+		if err := s.providerService.TestConnection(ctx); err != nil {
 			status.Valid = false
 			status.Error = err.Error()
 		} else {
@@ -266,7 +266,7 @@ func (s *Server) polygonFetchDividendsHandler(w http.ResponseWriter, r *http.Req
 		log.Printf("[POLYGON API] Fetching dividends for %d symbols (prioritized order)", len(symbols))
 
 		for _, symbol := range symbols {
-			dividends, err := s.polygonService.FetchDividendHistory(ctx, symbol, request.Limit)
+			dividends, err := s.providerService.FetchDividendHistory(ctx, symbol, request.Limit)
 			processed++
 			
 			if err != nil {
@@ -288,7 +288,7 @@ func (s *Server) polygonFetchDividendsHandler(w http.ResponseWriter, r *http.Req
 		log.Printf("[POLYGON API] Fetching dividends for specific symbols: %v", request.Symbols)
 
 		for _, symbol := range request.Symbols {
-			dividends, err := s.polygonService.FetchDividendHistory(ctx, symbol, request.Limit)
+			dividends, err := s.providerService.FetchDividendHistory(ctx, symbol, request.Limit)
 			processed++
 			
 			if err != nil {

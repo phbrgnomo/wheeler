@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"stonks/internal/database"
 	"stonks/internal/models"
-	"stonks/internal/polygon"
+	"stonks/internal/providers"
 	"strings"
 	"time"
 
@@ -28,7 +28,7 @@ type Server struct {
 	dividendService     *models.DividendService
 	settingService      *models.SettingService
 	metricService       *models.MetricService
-	polygonService      *polygon.Service
+	providerService     *providers.Service
 	templates           *template.Template
 }
 
@@ -259,7 +259,7 @@ func NewServer() (*Server, error) {
 		dividendService:     models.NewDividendService(dbWrapper.DB),
 		settingService:      settingService,
 		metricService:       models.NewMetricService(dbWrapper.DB),
-		polygonService:      polygon.NewService(symbolService, settingService),
+		providerService:     providers.NewService(symbolService, settingService),
 		templates:           templates,
 	}
 
