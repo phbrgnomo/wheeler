@@ -7,11 +7,11 @@ import (
 
 // MockProvider implements Provider interface for testing
 type MockProvider struct {
-	name            string
-	quoteFunc       func(ctx context.Context, symbol string) (*Quote, error)
-	detailsFunc     func(ctx context.Context, symbol string) (*TickerDetails, error)
-	dividendsFunc   func(ctx context.Context, symbol string, limit int) ([]*Dividend, error)
-	validateFunc    func(ctx context.Context) error
+	name          string
+	quoteFunc     func(ctx context.Context, symbol string) (*Quote, error)
+	detailsFunc   func(ctx context.Context, symbol string) (*TickerDetails, error)
+	dividendsFunc func(ctx context.Context, symbol string, limit int) ([]*Dividend, error)
+	validateFunc  func(ctx context.Context) error
 }
 
 func (m *MockProvider) GetQuote(ctx context.Context, symbol string) (*Quote, error) {
@@ -59,6 +59,17 @@ func TestProviderInterface(t *testing.T) {
 	}
 
 	// Test GetQuote
+	quote, err := mock.GetQuote(ctx, "AAPL")
+	if err != nil {
+		t.Fatalf("GetQuote failed: %v", err)
+	}
+	if quote.Symbol != "AAPL" {
+		t.Errorf("Expected symbol 'AAPL', got '%s'", quote.Symbol)
+	}
+	if quote.Price != 100.0 {
+		t.Errorf("Expected price 100.0, got %.2f", quote.Price)
+	}
+
 	// Test with custom quote function
 	mock.quoteFunc = func(ctx context.Context, symbol string) (*Quote, error) {
 		return &Quote{Symbol: symbol, Price: 150.5}, nil
@@ -69,16 +80,6 @@ func TestProviderInterface(t *testing.T) {
 	}
 	if quote.Price != 150.5 {
 		t.Errorf("Expected custom price 150.5, got %.2f", quote.Price)
-	}
-	quote, err := mock.GetQuote(ctx, "AAPL")
-	if err != nil {
-		t.Fatalf("GetQuote failed: %v", err)
-	}
-	if quote.Symbol != "AAPL" {
-		t.Errorf("Expected symbol 'AAPL', got '%s'", quote.Symbol)
-	}
-	if quote.Price != 100.0 {
-		t.Errorf("Expected price 100.0, got %.2f", quote.Price)
 	}
 
 	// Test GetTickerDetails

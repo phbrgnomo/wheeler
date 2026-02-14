@@ -261,6 +261,21 @@ func (s *Service) GetAPIKeyStatus() *APIKeyStatus {
 	return status
 }
 
+// Name returns the name of the configured provider
+func (s *Service) Name() string {
+	providerType := strings.ToLower(strings.TrimSpace(s.settingService.GetValue("DATA_PROVIDER_TYPE")))
+	if providerType == "" {
+		providerType = "polygon"
+	}
+
+	switch providerType {
+	case "polygon":
+		return "Polygon.io"
+	default:
+		return strings.Title(providerType)
+	}
+}
+
 // GetRateLimitDelay returns the rate limit delay based on the configured provider
 func (s *Service) GetRateLimitDelay() time.Duration {
 	providerType := strings.ToLower(strings.TrimSpace(s.settingService.GetValue("DATA_PROVIDER_TYPE")))
