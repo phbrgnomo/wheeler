@@ -26,21 +26,33 @@ func NewService(symbolService *models.SymbolService, settingService *models.Sett
 
 // getProvider returns the configured provider with API key
 func (s *Service) getProvider() (Provider, error) {
-	apiKey := s.settingService.GetValue("POLYGON_API_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("Polygon API key not configured - please set your API key in Settings")
+	// Determine which data provider to use, defaulting to Polygon for backwards compatibility
+	providerType := s.settingService.GetValue("DATA_PROVIDER_TYPE")
+	if providerType == "" {
+		providerType = "polygon"
 	}
+	providerType = strings.ToLower(providerType)
 
-	// Log masked API key for debugging
-	var maskedKey string
-	if len(apiKey) > 6 {
-		maskedKey = apiKey[:3] + "..." + apiKey[len(apiKey)-3:]
-	} else {
-		maskedKey = "***"
+	switch providerType {
+	case "polygon":
+		apiKey := s.settingService.GetValue("POLYGON_API_KEY")
+		if apiKey == "" {
+			return nil, fmt.Errorf("Polygon API key not configured - please set your API key in Settings")
+		}
+
+		// Log masked API key for debugging
+		var maskedKey string
+		if len(apiKey) > 6 {
+			maskedKey = apiKey[:3] + "..." + apiKey[len(apiKey)-3:]
+		} else {
+			maskedKey = "***"
+		}
+		log.Printf("[PROVIDER] Using %s provider with API key: %s", strings.ToUpper(providerType), maskedKey)
+
+		return NewPolygonProvider(apiKey), nil
+	default:
+		return nil, fmt.Errorf("unsupported data provider type: %s", providerType)
 	}
-	log.Printf("[PROVIDER] Using API key: %s", maskedKey)
-
-	return NewPolygonProvider(apiKey), nil
 }
 
 // UpdateSymbolPrice updates a single symbol's price from the configured provider
@@ -103,7 +115,7 @@ func (s *Service) UpdateAllSymbolPrices(ctx context.Context) error {
 			updated++
 		}
 
-		// Rate limiting: Free tier allows 5 requests per minute
+		// Rate limiting: Polygon.io Free tier allows 5 requests per minute (approx. 1 request every 12 seconds)
 		time.Sleep(12 * time.Second)
 	}
 
