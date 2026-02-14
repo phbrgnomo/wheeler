@@ -16,10 +16,14 @@ COPY . .
 # Build the application with CGO enabled for SQLite
 RUN CGO_ENABLED=1 go build -o wheeler .
 
+
 # Runtime stage
 FROM alpine:3.19
 
 WORKDIR /app
+
+# Create unprivileged user
+RUN adduser -S -h /app appuser
 
 # Copy the binary from builder
 COPY --from=builder /app/wheeler .
@@ -33,7 +37,10 @@ COPY --from=builder /app/internal/database/schema.sql ./internal/database/schema
 COPY --from=builder /app/internal/database/wheel_strategy_example.sql ./internal/database/wheel_strategy_example.sql
 
 # Create data directory for SQLite database
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data && chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
 
 # Expose the web server port
 EXPOSE 8080
