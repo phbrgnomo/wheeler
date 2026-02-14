@@ -520,8 +520,8 @@ func (s *Server) renderTemplate(w http.ResponseWriter, templateName string, data
 	
 	// Template executed successfully, write to response
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, err = w.Write(buf.Bytes())
-	if err != nil {
+	// Use io.Copy to write the buffer to the response safely
+	if _, err := buf.WriteTo(w); err != nil {
 		log.Printf("[TEMPLATE] ERROR: Failed to write response for %s: %v", templateName, err)
 	} else {
 		log.Printf("[TEMPLATE] Successfully rendered template: %s", templateName)
