@@ -3,6 +3,11 @@
  * If html is provided, uses innerHTML (sanitized if possible), else uses textContent.
  * Optionally adds a fallback class if not using HTML.
  *
+ * Usage:
+ *   setSafeHTML(el, { html: '<b>markup</b>' }); // will be sanitized if DOMPurify present
+ *   setSafeHTML(el, { text: 'plain text' });    // always safe
+ *   setSafeHTML(el, { html, text, className }); // fallback to text/class if no DOMPurify
+ *
  * @param {HTMLElement} el
  * @param {Object} opts
  * @param {string} [opts.html] - HTML string to set (will be sanitized)
@@ -15,9 +20,18 @@ export function setSafeHTML(el, { html, text, className } = {}) {
         el.innerHTML = window.DOMPurify.sanitize(html);
     } else if (text != null) {
         el.textContent = text;
-    }
-    if (!hasDOMPurify && className) {
-        el.classList.add(className);
+        if (!hasDOMPurify && className) {
+            el.classList.add(className);
+        }
+    } else if (html != null) {
+        // DOMPurify ausente, mas html fornecido: loga warning e usa textContent
+        el.textContent = '[DOMPurify missing: displaying as text] ' + html;
+        if (className) el.classList.add(className);
+        if (typeof window !== 'undefined' && !window.DOMPurifyWarned) {
+            window.DOMPurifyWarned = true;
+            // eslint-disable-next-line no-console
+            console.warn('DOMPurify is not loaded: falling back to textContent for HTML.');
+        }
     }
 }
 /**
@@ -190,11 +204,13 @@ export function setButtonLoading(button, isLoading, loadingText = 'Loading...') 
         // Save the current markup (may include icons/spans) for later restore
         button.dataset.originalText = button.innerHTML;
         button.disabled = true;
-        // Only loadingText is user-controlled; spinner markup is fixed
-        setSafeHTML(button, {
-            html: `<i class="fas fa-spinner fa-spin"></i> ${loadingText}`,
-            text: loadingText
-        });
+        // Only loadingText is user-controlled; spinner markup is fixed, so use DOM APIs
+        button.innerHTML = '';
+        const icon = document.createElement('i');
+        icon.className = 'fas fa-spinner fa-spin';
+        button.appendChild(icon);
+        const textNode = document.createTextNode(' ' + loadingText);
+        button.appendChild(textNode);
     } else {
         button.disabled = false;
         // Restore original markup as-is (do not re-sanitize)
