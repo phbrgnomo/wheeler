@@ -1,3 +1,4 @@
+import { setSafeHTML } from './api-utils.js';
 // Chart color palette - bright theme colors matching Overall Allocation
 export const CHART_COLORS = [
     '#4fc3f7',  // Bright Cyan (primary theme color)
@@ -46,30 +47,17 @@ export function formatCurrencyValue(value) {
 // Format currency and update element
 export function formatCurrency(value, element) {
     const formattedValue = formatCurrencyValue(value);
-    if (window.DOMPurify) {
-        if (value < 0) {
-            element.innerHTML = window.DOMPurify.sanitize('-' + formattedValue);
-        } else {
-            element.innerHTML = window.DOMPurify.sanitize(formattedValue);
-        }
-    } else {
-        if (value < 0) {
-            element.innerHTML = '-' + formattedValue;
-        } else {
-            element.innerHTML = formattedValue;
-        }
-    }
+    setSafeHTML(element, {
+        html: value < 0 ? '-' + formattedValue : formattedValue,
+        text: value < 0 ? '-' + formattedValue : formattedValue
+    });
     element.style.color = '#27ae60';
 }
 
 // Format percentage value
 export function formatPercentage(value, element) {
     const formattedValue = value.toFixed(1) + '%';
-    if (window.DOMPurify) {
-        element.innerHTML = window.DOMPurify.sanitize(formattedValue);
-    } else {
-        element.innerHTML = formattedValue;
-    }
+    setSafeHTML(element, { html: formattedValue, text: formattedValue });
     element.style.color = '#27ae60';
 }
 

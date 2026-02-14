@@ -16,11 +16,10 @@ export function showConfirmModal(title, message, onConfirm) {
     
     if (titleElement) titleElement.textContent = title;
     if (messageElement) {
-        if (window.DOMPurify) {
-            messageElement.innerHTML = window.DOMPurify.sanitize(message);
-        } else {
-            messageElement.textContent = message;
-        }
+        // Only use HTML if message is trusted/expected to be HTML, else prefer textContent
+        import('./api-utils.js').then(({ setSafeHTML }) => {
+            setSafeHTML(messageElement, { html: message, text: message });
+        });
     }
     
     confirmModal.style.display = 'block';

@@ -1,4 +1,26 @@
 /**
+ * Safely set HTML or text content on an element, using DOMPurify if available.
+ * If html is provided, uses innerHTML (sanitized if possible), else uses textContent.
+ * Optionally adds a fallback class if not using HTML.
+ *
+ * @param {HTMLElement} el
+ * @param {Object} opts
+ * @param {string} [opts.html] - HTML string to set (will be sanitized)
+ * @param {string} [opts.text] - Text string to set if HTML not available
+ * @param {string} [opts.className] - Class to add if fallback to text
+ */
+export function setSafeHTML(el, { html, text, className } = {}) {
+    const hasDOMPurify = typeof window !== 'undefined' && window.DOMPurify;
+    if (hasDOMPurify && html != null) {
+        el.innerHTML = window.DOMPurify.sanitize(html);
+    } else if (text != null) {
+        el.textContent = text;
+    }
+    if (!hasDOMPurify && className) {
+        el.classList.add(className);
+    }
+}
+/**
  * API Utility Module
  * Provides reusable fetch/AJAX wrappers with consistent error handling
  */
@@ -165,19 +187,19 @@ export async function putAndReload(url, data, successMessage) {
 export function setButtonLoading(button, isLoading, loadingText = 'Loading...') {
     if (!button) return;
     if (isLoading) {
+        // Save the current markup (may include icons/spans) for later restore
         button.dataset.originalText = button.innerHTML;
         button.disabled = true;
-        if (window.DOMPurify) {
-            button.innerHTML = window.DOMPurify.sanitize(`<i class=\"fas fa-spinner fa-spin\"></i> ${loadingText}`);
-        } else {
-            button.innerHTML = `<i class=\"fas fa-spinner fa-spin\"></i> ${loadingText}`;
-        }
+        // Only loadingText is user-controlled; spinner markup is fixed
+        setSafeHTML(button, {
+            html: `<i class="fas fa-spinner fa-spin"></i> ${loadingText}`,
+            text: loadingText
+        });
     } else {
         button.disabled = false;
-        if (window.DOMPurify && button.dataset.originalText) {
-            button.innerHTML = window.DOMPurify.sanitize(button.dataset.originalText);
-        } else {
-            button.innerHTML = button.dataset.originalText || button.innerHTML;
+        // Restore original markup as-is (do not re-sanitize)
+        if (button.dataset.originalText) {
+            button.innerHTML = button.dataset.originalText;
         }
         delete button.dataset.originalText;
     }

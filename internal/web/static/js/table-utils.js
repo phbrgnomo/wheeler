@@ -1,3 +1,4 @@
+import { setSafeHTML } from './api-utils.js';
 // Apply financial table formatting with profit/loss coloring
 export function applyFinancialTableFormatting(options = {}) {
     const {
@@ -25,54 +26,44 @@ export function applyFinancialTableFormatting(options = {}) {
                 const formattedValue = '$' + Math.round(Math.abs(value)).toLocaleString();
                 // Absolute value columns - no profit/loss coloring
                 if (absoluteValueColumns.includes(columnIndex)) {
-                    if (window.DOMPurify) {
-                        cell.innerHTML = window.DOMPurify.sanitize(formattedValue);
-                    } else {
-                        cell.textContent = formattedValue;
-                    }
+                    setSafeHTML(cell, {
+                        html: formattedValue,
+                        text: formattedValue
+                    });
+                } else if (value < 0) {
+                    setSafeHTML(cell, {
+                        html: `<span class="negative">-${formattedValue}</span>`,
+                        text: `-${formattedValue}`,
+                        className: 'negative'
+                    });
+                } else if (value > 0) {
+                    setSafeHTML(cell, {
+                        html: `<span class="positive">${formattedValue}</span>`,
+                        text: formattedValue,
+                        className: 'positive'
+                    });
                 } else {
-                    // Apply profit/loss coloring
-                    if (value < 0) {
-                        if (window.DOMPurify) {
-                            cell.innerHTML = window.DOMPurify.sanitize('<span class="negative">-' + formattedValue + '</span>');
-                        } else {
-                            cell.textContent = '-' + formattedValue;
-                            cell.classList.add('negative');
-                        }
-                    } else if (value > 0) {
-                        if (window.DOMPurify) {
-                            cell.innerHTML = window.DOMPurify.sanitize('<span class="positive">' + formattedValue + '</span>');
-                        } else {
-                            cell.textContent = formattedValue;
-                            cell.classList.add('positive');
-                        }
-                    } else {
-                        if (window.DOMPurify) {
-                            cell.innerHTML = window.DOMPurify.sanitize(formattedValue);
-                        } else {
-                            cell.textContent = formattedValue;
-                        }
-                    }
+                    setSafeHTML(cell, {
+                        html: formattedValue,
+                        text: formattedValue
+                    });
                 }
             }
             // Check if it's a percentage value
             else if (text.match(/^-?[\d,]+\.\d{2}%$/)) {
                 const value = parseFloat(text.replace(/[%,]/g, ''));
-                // Apply coloring: negative percentages are red, positive are green
                 if (value < 0) {
-                    if (window.DOMPurify) {
-                        cell.innerHTML = window.DOMPurify.sanitize('<span class="negative">' + text + '</span>');
-                    } else {
-                        cell.textContent = text;
-                        cell.classList.add('negative');
-                    }
+                    setSafeHTML(cell, {
+                        html: `<span class="negative">${text}</span>`,
+                        text,
+                        className: 'negative'
+                    });
                 } else if (value > 0) {
-                    if (window.DOMPurify) {
-                        cell.innerHTML = window.DOMPurify.sanitize('<span class="positive">' + text + '</span>');
-                    } else {
-                        cell.textContent = text;
-                        cell.classList.add('positive');
-                    }
+                    setSafeHTML(cell, {
+                        html: `<span class="positive">${text}</span>`,
+                        text,
+                        className: 'positive'
+                    });
                 }
             }
         });
