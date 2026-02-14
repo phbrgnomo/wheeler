@@ -15,7 +15,13 @@ export function showConfirmModal(title, message, onConfirm) {
     const confirmButton = document.getElementById('confirmModalConfirm');
     
     if (titleElement) titleElement.textContent = title;
-    if (messageElement) messageElement.innerHTML = message;
+    if (messageElement) {
+        if (window.DOMPurify) {
+            messageElement.innerHTML = window.DOMPurify.sanitize(message);
+        } else {
+            messageElement.textContent = message;
+        }
+    }
     
     confirmModal.style.display = 'block';
     

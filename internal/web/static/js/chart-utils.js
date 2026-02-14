@@ -46,10 +46,18 @@ export function formatCurrencyValue(value) {
 // Format currency and update element
 export function formatCurrency(value, element) {
     const formattedValue = formatCurrencyValue(value);
-    if (value < 0) {
-        element.innerHTML = '-' + formattedValue;
+    if (window.DOMPurify) {
+        if (value < 0) {
+            element.innerHTML = window.DOMPurify.sanitize('-' + formattedValue);
+        } else {
+            element.innerHTML = window.DOMPurify.sanitize(formattedValue);
+        }
     } else {
-        element.innerHTML = formattedValue;
+        if (value < 0) {
+            element.innerHTML = '-' + formattedValue;
+        } else {
+            element.innerHTML = formattedValue;
+        }
     }
     element.style.color = '#27ae60';
 }
@@ -57,7 +65,11 @@ export function formatCurrency(value, element) {
 // Format percentage value
 export function formatPercentage(value, element) {
     const formattedValue = value.toFixed(1) + '%';
-    element.innerHTML = formattedValue;
+    if (window.DOMPurify) {
+        element.innerHTML = window.DOMPurify.sanitize(formattedValue);
+    } else {
+        element.innerHTML = formattedValue;
+    }
     element.style.color = '#27ae60';
 }
 

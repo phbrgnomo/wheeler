@@ -164,14 +164,21 @@ export async function putAndReload(url, data, successMessage) {
  */
 export function setButtonLoading(button, isLoading, loadingText = 'Loading...') {
     if (!button) return;
-    
     if (isLoading) {
         button.dataset.originalText = button.innerHTML;
         button.disabled = true;
-        button.innerHTML = `<i class="fas fa-spinner fa-spin"></i> ${loadingText}`;
+        if (window.DOMPurify) {
+            button.innerHTML = window.DOMPurify.sanitize(`<i class=\"fas fa-spinner fa-spin\"></i> ${loadingText}`);
+        } else {
+            button.innerHTML = `<i class=\"fas fa-spinner fa-spin\"></i> ${loadingText}`;
+        }
     } else {
         button.disabled = false;
-        button.innerHTML = button.dataset.originalText || button.innerHTML;
+        if (window.DOMPurify && button.dataset.originalText) {
+            button.innerHTML = window.DOMPurify.sanitize(button.dataset.originalText);
+        } else {
+            button.innerHTML = button.dataset.originalText || button.innerHTML;
+        }
         delete button.dataset.originalText;
     }
 }
