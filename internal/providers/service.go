@@ -16,6 +16,26 @@ type Service struct {
 	settingService *models.SettingService
 }
 
+// BulkPriceUpdateResult captures aggregate information from a bulk price update run
+type BulkPriceUpdateResult struct {
+	Updated int
+	Failed  int
+	Errors  []string
+}
+
+// DividendFetchRecord captures dividend data returned for a symbol
+type DividendFetchRecord struct {
+	Symbol    string
+	Dividends []*DividendInfo
+}
+
+// BulkDividendFetchResult summarizes dividend history fetches across many symbols
+type BulkDividendFetchResult struct {
+	Processed int
+	Results   []DividendFetchRecord
+	Errors    []string
+}
+
 // NewService creates a new provider service with the default provider
 func NewService(symbolService *models.SymbolService, settingService *models.SettingService) *Service {
 	return &Service{
@@ -100,45 +120,36 @@ func (s *Service) updateSymbolPriceWithProvider(ctx context.Context, provider Pr
 }
 
 // UpdateAllSymbolPrices updates prices for all symbols in the database
-func (s *Service) UpdateAllSymbolPrices(ctx context.Context) error {
+func (s *Service) UpdateAllSymbolPrices(ctx context.Context) (*BulkPriceUpdateResult, error) {
 	symbols, err := s.symbolService.GetPrioritizedSymbols()
 	if err != nil {
-		return fmt.Errorf("failed to get prioritized symbols: %w", err)
+		return nil, fmt.Errorf("failed to get prioritized symbols: %w", err)
+	}
+
+	log.Printf("[PROVIDER] Starting prioritized bulk price update for %d symbols", len(symbols))
+	return s.UpdateSymbolPrices(ctx, symbols)
+}
+
+// UpdateSymbolPrices updates prices for the provided symbol list using a shared provider instance
+func (s *Service) UpdateSymbolPrices(ctx context.Context, symbols []string) (*BulkPriceUpdateResult, error) {
+	normalized := s.normalizeSymbols(symbols)
+	if len(normalized) == 0 {
+		return &BulkPriceUpdateResult{}, nil
 	}
 
 	provider, err := s.getProvider()
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("failed to get provider: %w", err)
 	}
 
-	log.Printf("[PROVIDER] Starting prioritized bulk price update for %d symbols using %s", len(symbols), provider.Name())
-
-	// Get rate limit configuration from provider (or use default)
-	rateLimitDelay := s.GetRateLimitDelay()
-
-	var updated, failed int
-	for _, symbol := range symbols {
-		if err := s.updateSymbolPriceWithProvider(ctx, provider, symbol); err != nil {
-			log.Printf("[PROVIDER] Failed to update %s: %v", symbol, err)
-			failed++
-		} else {
-			updated++
-		}
-
-		// Rate limiting to respect provider API limits, while honoring context cancellation
-		if rateLimitDelay > 0 {
-			select {
-			case <-ctx.Done():
-				log.Printf("[PROVIDER] Prioritized bulk price update canceled during rate limiting: %v", ctx.Err())
-				return ctx.Err()
-			case <-time.After(rateLimitDelay):
-				// continue to next symbol
-			}
-		}
+	log.Printf("[PROVIDER] Starting price update for %d symbols using %s", len(normalized), provider.Name())
+	result, runErr := s.runPriceUpdates(ctx, provider, normalized)
+	if runErr != nil {
+		return result, runErr
 	}
 
-	log.Printf("[PROVIDER] Prioritized bulk price update complete: %d updated, %d failed", updated, failed)
-	return nil
+	log.Printf("[PROVIDER] Price update complete: %d updated, %d failed", result.Updated, result.Failed)
+	return result, nil
 }
 
 // FetchSymbolDetails gets detailed information about a symbol from the provider
@@ -199,21 +210,50 @@ func (s *Service) FetchDividendHistory(ctx context.Context, symbol string, limit
 		return nil, fmt.Errorf("failed to get dividends: %w", err)
 	}
 
-	var result []*DividendInfo
-	for _, div := range dividends {
-		info := &DividendInfo{
-			Symbol:          div.Symbol,
-			CashAmount:      div.CashAmount,
-			DeclarationDate: div.DeclarationDate,
-			ExDividendDate:  div.ExDividendDate,
-			PayDate:         div.PayDate,
-			RecordDate:      div.RecordDate,
-			DividendType:    div.DividendType,
-			Frequency:       div.Frequency,
-		}
-		result = append(result, info)
+	return convertDividendsToInfo(dividends), nil
+}
+
+// FetchDividendHistoryForSymbols fetches dividend history for each provided symbol
+func (s *Service) FetchDividendHistoryForSymbols(ctx context.Context, symbols []string, limit int) (*BulkDividendFetchResult, error) {
+	normalized := s.normalizeSymbols(symbols)
+	if len(normalized) == 0 {
+		return &BulkDividendFetchResult{Results: []DividendFetchRecord{}}, nil
 	}
 
+	if limit <= 0 {
+		limit = 10
+	}
+
+	provider, err := s.getProvider()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get provider: %w", err)
+	}
+
+	log.Printf("[PROVIDER] Starting dividend fetch for %d symbols using %s", len(normalized), provider.Name())
+	rateLimitDelay := s.GetRateLimitDelay()
+	result := &BulkDividendFetchResult{}
+
+	for idx, symbol := range normalized {
+		result.Processed++
+		dividends, fetchErr := provider.GetDividends(ctx, symbol, limit)
+		if fetchErr != nil {
+			log.Printf("[PROVIDER] Failed to fetch dividends for %s: %v", symbol, fetchErr)
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", symbol, fetchErr))
+		} else {
+			result.Results = append(result.Results, DividendFetchRecord{
+				Symbol:    symbol,
+				Dividends: convertDividendsToInfo(dividends),
+			})
+		}
+
+		if idx < len(normalized)-1 {
+			if err := s.waitForRateLimit(ctx, rateLimitDelay); err != nil {
+				return result, err
+			}
+		}
+	}
+
+	log.Printf("[PROVIDER] Dividend fetch complete: %d symbols processed", result.Processed)
 	return result, nil
 }
 
@@ -333,4 +373,76 @@ type APIKeyStatus struct {
 	Masked     string `json:"masked"`
 	Valid      bool   `json:"valid"`
 	Error      string `json:"error,omitempty"`
+}
+
+func (s *Service) runPriceUpdates(ctx context.Context, provider Provider, symbols []string) (*BulkPriceUpdateResult, error) {
+	rateLimitDelay := s.GetRateLimitDelay()
+	result := &BulkPriceUpdateResult{}
+
+	for idx, symbol := range symbols {
+		if err := s.updateSymbolPriceWithProvider(ctx, provider, symbol); err != nil {
+			result.Failed++
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", symbol, err))
+			log.Printf("[PROVIDER] Failed to update %s: %v", symbol, err)
+		} else {
+			result.Updated++
+		}
+
+		if idx < len(symbols)-1 {
+			if err := s.waitForRateLimit(ctx, rateLimitDelay); err != nil {
+				return result, err
+			}
+		}
+	}
+
+	return result, nil
+}
+
+func (s *Service) waitForRateLimit(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(delay):
+		return nil
+	}
+}
+
+func (s *Service) normalizeSymbols(symbols []string) []string {
+	seen := make(map[string]struct{})
+	var normalized []string
+
+	for _, raw := range symbols {
+		symbol := strings.ToUpper(strings.TrimSpace(raw))
+		if symbol == "" {
+			continue
+		}
+		if _, exists := seen[symbol]; exists {
+			continue
+		}
+		seen[symbol] = struct{}{}
+		normalized = append(normalized, symbol)
+	}
+
+	return normalized
+}
+
+func convertDividendsToInfo(dividends []*Dividend) []*DividendInfo {
+	result := make([]*DividendInfo, 0, len(dividends))
+	for _, div := range dividends {
+		result = append(result, &DividendInfo{
+			Symbol:          div.Symbol,
+			CashAmount:      div.CashAmount,
+			DeclarationDate: div.DeclarationDate,
+			ExDividendDate:  div.ExDividendDate,
+			PayDate:         div.PayDate,
+			RecordDate:      div.RecordDate,
+			DividendType:    div.DividendType,
+			Frequency:       div.Frequency,
+		})
+	}
+	return result
 }

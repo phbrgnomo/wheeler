@@ -130,7 +130,7 @@ The modern web interface provides comprehensive portfolio tracking:
 - `/api/allocation-data` - Portfolio allocation data for charts
 - `/api/generate-test-data` - Test data generation for tutorials
 - `/api/settings` - Application settings management
-- `/api/polygon/*` - Polygon.io API integration endpoints
+- `/api/provider/*` - Market data provider endpoints (connection tests, price refresh, dividend sync)
 
 ## Financial Domain Context
 

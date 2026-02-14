@@ -196,7 +196,7 @@ func TestUpdateAllSymbolPrices_MissingAPIKey(t *testing.T) {
 
 	service := providers.NewService(symbolService, settingService)
 
-	err = service.UpdateAllSymbolPrices(ctx)
+	_, err = service.UpdateAllSymbolPrices(ctx)
 	if err == nil {
 		t.Fatal("Expected error without API key, got nil")
 	}
