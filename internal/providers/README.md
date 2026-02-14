@@ -132,10 +132,10 @@ All providers should:
 
 ## Rate Limiting
 
-Each provider should implement appropriate rate limiting:
-- Polygon.io Free Tier: 5 requests/minute (implemented in `Service.UpdateAllSymbolPrices`)
-- Add your provider's limits in the implementation
+Rate limiting is enforced centrally in the service layer via the shared `waitForRateLimit` / `runPriceUpdates` path, which throttles both price and dividend fetches.
 
+- Polygon.io Free Tier: 5 requests/minute (enforced via the shared rate-limiting pipeline)
+- When adding a new provider, document its limits and either reuse the shared rate limiter or add provider-specific safeguards where necessary
 ## Error Handling
 
 Providers should wrap errors with context:

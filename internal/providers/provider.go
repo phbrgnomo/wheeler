@@ -9,16 +9,15 @@ import (
 type Provider interface {
 	// GetQuote retrieves the current or most recent quote for a symbol
 	GetQuote(ctx context.Context, symbol string) (*Quote, error)
-	
+
 	// GetTickerDetails retrieves detailed information about a ticker
 	GetTickerDetails(ctx context.Context, symbol string) (*TickerDetails, error)
-	
+
 	// GetDividends retrieves dividend history for a symbol
 	GetDividends(ctx context.Context, symbol string, limit int) ([]*Dividend, error)
-	
+
 	// ValidateConnection tests if the provider connection is working
 	ValidateConnection(ctx context.Context) error
-	
 	// Name returns the provider's name
 	Name() string
 }

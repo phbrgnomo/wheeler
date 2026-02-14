@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"stonks/internal/models"
 	"strings"
+	"unicode"
 )
 
 // SettingsData holds data for the settings template
@@ -63,7 +64,7 @@ func formatProviderDisplayName(raw string) string {
 		return "Polygon.io"
 	default:
 		runes := []rune(trimmed)
-		runes[0] = []rune(strings.ToUpper(string(runes[0])))[0]
+		runes[0] = unicode.ToUpper(runes[0])
 		return string(runes)
 	}
 }

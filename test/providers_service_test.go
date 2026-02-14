@@ -135,8 +135,10 @@ func TestUpdateSymbolPrice_MissingAPIKey(t *testing.T) {
 	db := setupProvidersTestDB(t)
 
 	settingService := models.NewSettingService(db.DB)
-	settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
-	// Don't set POLYGON_API_KEY
+	if err := settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", ""); err != nil {
+		t.Fatalf("failed to set DATA_PROVIDER_TYPE: %v", err)
+	}
+	// Intentionally don't set POLYGON_API_KEY to test missing key scenario
 
 	symbolService := models.NewSymbolService(db.DB)
 	service := providers.NewService(symbolService, settingService)
@@ -157,8 +159,12 @@ func TestUpdateSymbolPrice_UnsupportedProvider(t *testing.T) {
 	db := setupProvidersTestDB(t)
 
 	settingService := models.NewSettingService(db.DB)
-	settingService.SetValue("DATA_PROVIDER_TYPE", "unsupported", "")
-	settingService.SetValue("POLYGON_API_KEY", "test_key", "")
+	if err := settingService.SetValue("DATA_PROVIDER_TYPE", "unsupported", ""); err != nil {
+		t.Fatalf("failed to set DATA_PROVIDER_TYPE: %v", err)
+	}
+	if err := settingService.SetValue("POLYGON_API_KEY", "test_key", ""); err != nil {
+		t.Fatalf("failed to set POLYGON_API_KEY: %v", err)
+	}
 
 	symbolService := models.NewSymbolService(db.DB)
 	service := providers.NewService(symbolService, settingService)
@@ -179,7 +185,9 @@ func TestUpdateAllSymbolPrices_MissingAPIKey(t *testing.T) {
 	db := setupProvidersTestDB(t)
 
 	settingService := models.NewSettingService(db.DB)
-	settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
+	if err := settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", ""); err != nil {
+		t.Fatalf("failed to set DATA_PROVIDER_TYPE: %v", err)
+	}
 
 	// No API key
 	symbolService := models.NewSymbolService(db.DB)
@@ -208,7 +216,9 @@ func TestFetchSymbolDetails_MissingAPIKey(t *testing.T) {
 	db := setupProvidersTestDB(t)
 
 	settingService := models.NewSettingService(db.DB)
-	settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
+	if err := settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", ""); err != nil {
+		t.Fatalf("failed to set DATA_PROVIDER_TYPE: %v", err)
+	}
 	// No API key - should fail
 
 	symbolService := models.NewSymbolService(db.DB)
@@ -230,7 +240,9 @@ func TestFetchDividendHistory_MissingAPIKey(t *testing.T) {
 	db := setupProvidersTestDB(t)
 
 	settingService := models.NewSettingService(db.DB)
-	settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
+	if err := settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", ""); err != nil {
+		t.Fatalf("failed to set DATA_PROVIDER_TYPE: %v", err)
+	}
 	// No API key
 
 	symbolService := models.NewSymbolService(db.DB)
@@ -252,7 +264,9 @@ func TestTestConnection_MissingAPIKey(t *testing.T) {
 	db := setupProvidersTestDB(t)
 
 	settingService := models.NewSettingService(db.DB)
-	settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
+	if err := settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", ""); err != nil {
+		t.Fatalf("failed to set DATA_PROVIDER_TYPE: %v", err)
+	}
 	// No API key
 
 	symbolService := models.NewSymbolService(db.DB)
@@ -294,7 +308,9 @@ func TestGetRateLimitDelay(t *testing.T) {
 
 			settingService := models.NewSettingService(db.DB)
 			if tt.providerType != "" {
-				settingService.SetValue("DATA_PROVIDER_TYPE", tt.providerType, "")
+				if err := settingService.SetValue("DATA_PROVIDER_TYPE", tt.providerType, ""); err != nil {
+					t.Fatalf("failed to set DATA_PROVIDER_TYPE: %v", err)
+				}
 			}
 
 			symbolService := models.NewSymbolService(db.DB)
@@ -313,8 +329,12 @@ func TestDebugLogging(t *testing.T) {
 	db := setupProvidersTestDB(t)
 
 	settingService := models.NewSettingService(db.DB)
-	settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
-	settingService.SetValue("POLYGON_API_KEY", "test_key_12345", "")
+	if err := settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", ""); err != nil {
+		t.Fatalf("failed to set DATA_PROVIDER_TYPE: %v", err)
+	}
+	if err := settingService.SetValue("POLYGON_API_KEY", "test_key_12345", ""); err != nil {
+		t.Fatalf("failed to set POLYGON_API_KEY: %v", err)
+	}
 
 	symbolService := models.NewSymbolService(db.DB)
 	// Test with DEBUG_PROVIDERS=1
