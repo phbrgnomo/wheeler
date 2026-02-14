@@ -38,8 +38,7 @@ RUN mkdir -p /app/data
 # Create an unprivileged system user and set ownership of necessary writable directories
 # Use Alpine addgroup/adduser to create a system user `appuser` with home `/home/appuser`
 RUN addgroup -S appuser \
- && adduser -S -G appuser -h /home/appuser appuser \
- && mkdir -p /home/appuser \
+ && adduser -S -G appuser -h /home/appuser appuser
  && chown -R appuser:appuser /home/appuser /app/data
 
 # Switch to the unprivileged user for runtime
