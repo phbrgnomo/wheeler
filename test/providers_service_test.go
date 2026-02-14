@@ -1,33 +1,34 @@
 package test
 
 import (
-"context"
-"os"
-"stonks/internal/database"
-"stonks/internal/models"
-"stonks/internal/providers"
-"testing"
-"time"
+	"context"
+	"os"
+	"stonks/internal/database"
+	"stonks/internal/models"
+	"stonks/internal/providers"
+	"strings"
+	"testing"
+	"time"
 )
 
 // setupProvidersTestDB creates a temporary test database for provider tests
 func setupProvidersTestDB(t *testing.T) *database.DB {
 	testDBPath := "./data/providers_test.db"
-	
+
 	if err := os.Remove(testDBPath); err != nil && !os.IsNotExist(err) {
 		t.Logf("Note: Could not delete existing test database: %v", err)
 	}
-	
+
 	db, err := database.NewDB(testDBPath)
 	if err != nil {
 		t.Fatalf("Failed to create test database: %v", err)
 	}
-	
+
 	t.Cleanup(func() {
 		db.Close()
 		os.Remove(testDBPath)
 	})
-	
+
 	return db
 }
 
@@ -72,20 +73,20 @@ func TestGetAPIKeyStatus_Polygon(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-db := setupProvidersTestDB(t)
+			db := setupProvidersTestDB(t)
 
-settingService := models.NewSettingService(db.DB)
-if tt.providerType != "" {
-settingService.SetValue("DATA_PROVIDER_TYPE", tt.providerType, "")
-}
-if tt.apiKey != "" {
-settingService.SetValue("POLYGON_API_KEY", tt.apiKey, "")
-}
+			settingService := models.NewSettingService(db.DB)
+			if tt.providerType != "" {
+				settingService.SetValue("DATA_PROVIDER_TYPE", tt.providerType, "")
+			}
+			if tt.apiKey != "" {
+				settingService.SetValue("POLYGON_API_KEY", tt.apiKey, "")
+			}
 
-symbolService := models.NewSymbolService(db.DB)
-service := providers.NewService(symbolService, settingService)
+			symbolService := models.NewSymbolService(db.DB)
+			service := providers.NewService(symbolService, settingService)
 
-status := service.GetAPIKeyStatus()
+			status := service.GetAPIKeyStatus()
 
 			if status.Configured != tt.wantConfigured {
 				t.Errorf("Expected Configured=%v, got %v", tt.wantConfigured, status.Configured)
@@ -129,203 +130,191 @@ func TestUpdateSymbolPrice_MissingAPIKey(t *testing.T) {
 	settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
 	// Don't set POLYGON_API_KEY
 
-symbolService := models.NewSymbolService(db.DB)
-service := providers.NewService(symbolService, settingService)
+	symbolService := models.NewSymbolService(db.DB)
+	service := providers.NewService(symbolService, settingService)
 
-err := service.UpdateSymbolPrice(ctx, "AAPL")
-if err == nil {
-t.Fatal("Expected error when API key is missing, got nil")
-}
+	err := service.UpdateSymbolPrice(ctx, "AAPL")
+	if err == nil {
+		t.Fatal("Expected error when API key is missing, got nil")
+	}
 
-if !stringContains(err.Error(), "failed to get provider") {
-t.Errorf("Expected error about provider, got: %v", err)
-}
+	if !strings.Contains(err.Error(), "failed to get provider") {
+		t.Errorf("Expected error about provider, got: %v", err)
+	}
 }
 
 // TestUpdateSymbolPrice_UnsupportedProvider tests error with unsupported provider
 func TestUpdateSymbolPrice_UnsupportedProvider(t *testing.T) {
-ctx := context.Background()
-db := setupProvidersTestDB(t)
+	ctx := context.Background()
+	db := setupProvidersTestDB(t)
 
-settingService := models.NewSettingService(db.DB)
-settingService.SetValue("DATA_PROVIDER_TYPE", "unsupported", "")
-settingService.SetValue("POLYGON_API_KEY", "test_key", "")
+	settingService := models.NewSettingService(db.DB)
+	settingService.SetValue("DATA_PROVIDER_TYPE", "unsupported", "")
+	settingService.SetValue("POLYGON_API_KEY", "test_key", "")
 
-symbolService := models.NewSymbolService(db.DB)
-service := providers.NewService(symbolService, settingService)
+	symbolService := models.NewSymbolService(db.DB)
+	service := providers.NewService(symbolService, settingService)
 
-err := service.UpdateSymbolPrice(ctx, "AAPL")
-if err == nil {
-t.Fatal("Expected error when provider is unsupported, got nil")
-}
+	err := service.UpdateSymbolPrice(ctx, "AAPL")
+	if err == nil {
+		t.Fatal("Expected error when provider is unsupported, got nil")
+	}
 
-if !stringContains(err.Error(), "failed to get provider") {
-t.Errorf("Expected error about provider, got: %v", err)
-}
+	if !strings.Contains(err.Error(), "failed to get provider") {
+		t.Errorf("Expected error about provider, got: %v", err)
+	}
 }
 
 // TestUpdateAllSymbolPrices_MissingAPIKey tests bulk update without API key
 func TestUpdateAllSymbolPrices_MissingAPIKey(t *testing.T) {
-ctx := context.Background()
-db := setupProvidersTestDB(t)
+	ctx := context.Background()
+	db := setupProvidersTestDB(t)
 
-settingService := models.NewSettingService(db.DB)
-settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
-// No API key
+	settingService := models.NewSettingService(db.DB)
+	settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
+	// No API key
 
-symbolService := models.NewSymbolService(db.DB)
-// Create test symbols
-symbolService.Create("AAPL")
-symbolService.Create("GOOGL")
+	symbolService := models.NewSymbolService(db.DB)
+	// Create test symbols
+	symbolService.Create("AAPL")
+	symbolService.Create("GOOGL")
 
-service := providers.NewService(symbolService, settingService)
+	service := providers.NewService(symbolService, settingService)
 
-err := service.UpdateAllSymbolPrices(ctx)
-if err == nil {
-t.Fatal("Expected error without API key, got nil")
-}
+	err := service.UpdateAllSymbolPrices(ctx)
+	if err == nil {
+		t.Fatal("Expected error without API key, got nil")
+	}
 }
 
 // TestFetchSymbolDetails_MissingAPIKey tests fetch details without API key
 func TestFetchSymbolDetails_MissingAPIKey(t *testing.T) {
-ctx := context.Background()
-db := setupProvidersTestDB(t)
+	ctx := context.Background()
+	db := setupProvidersTestDB(t)
 
-settingService := models.NewSettingService(db.DB)
-settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
-// No API key - should fail
+	settingService := models.NewSettingService(db.DB)
+	settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
+	// No API key - should fail
 
-symbolService := models.NewSymbolService(db.DB)
-service := providers.NewService(symbolService, settingService)
+	symbolService := models.NewSymbolService(db.DB)
+	service := providers.NewService(symbolService, settingService)
 
-_, err := service.FetchSymbolDetails(ctx, "AAPL")
-if err == nil {
-t.Fatal("Expected error without API key, got nil")
-}
+	_, err := service.FetchSymbolDetails(ctx, "AAPL")
+	if err == nil {
+		t.Fatal("Expected error without API key, got nil")
+	}
 
-if !stringContains(err.Error(), "failed to get provider") {
-t.Errorf("Expected provider error, got: %v", err)
-}
+	if !strings.Contains(err.Error(), "failed to get provider") {
+		t.Errorf("Expected provider error, got: %v", err)
+	}
 }
 
 // TestFetchDividendHistory_MissingAPIKey tests dividend history without API key
 func TestFetchDividendHistory_MissingAPIKey(t *testing.T) {
-ctx := context.Background()
-db := setupProvidersTestDB(t)
+	ctx := context.Background()
+	db := setupProvidersTestDB(t)
 
-settingService := models.NewSettingService(db.DB)
-settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
-// No API key
+	settingService := models.NewSettingService(db.DB)
+	settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
+	// No API key
 
-symbolService := models.NewSymbolService(db.DB)
-service := providers.NewService(symbolService, settingService)
+	symbolService := models.NewSymbolService(db.DB)
+	service := providers.NewService(symbolService, settingService)
 
-_, err := service.FetchDividendHistory(ctx, "AAPL", 10)
-if err == nil {
-t.Fatal("Expected error without API key, got nil")
-}
+	_, err := service.FetchDividendHistory(ctx, "AAPL", 10)
+	if err == nil {
+		t.Fatal("Expected error without API key, got nil")
+	}
 
-if !stringContains(err.Error(), "failed to get provider") {
-t.Errorf("Expected provider error, got: %v", err)
-}
+	if !strings.Contains(err.Error(), "failed to get provider") {
+		t.Errorf("Expected provider error, got: %v", err)
+	}
 }
 
 // TestTestConnection_MissingAPIKey tests connection test without API key
 func TestTestConnection_MissingAPIKey(t *testing.T) {
-ctx := context.Background()
-db := setupProvidersTestDB(t)
+	ctx := context.Background()
+	db := setupProvidersTestDB(t)
 
-settingService := models.NewSettingService(db.DB)
-settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
-// No API key
+	settingService := models.NewSettingService(db.DB)
+	settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
+	// No API key
 
-symbolService := models.NewSymbolService(db.DB)
-service := providers.NewService(symbolService, settingService)
+	symbolService := models.NewSymbolService(db.DB)
+	service := providers.NewService(symbolService, settingService)
 
-err := service.TestConnection(ctx)
-if err == nil {
-t.Fatal("Expected error without API key, got nil")
-}
+	err := service.TestConnection(ctx)
+	if err == nil {
+		t.Fatal("Expected error without API key, got nil")
+	}
 }
 
 // TestGetRateLimitDelay tests rate limit delay configuration
 func TestGetRateLimitDelay(t *testing.T) {
-tests := []struct {
-name         string
-providerType string
-wantDelay    time.Duration
-}{
-{
-name:         "polygon provider",
-providerType: "polygon",
-wantDelay:    12 * time.Second,
-},
-{
-name:         "default provider",
-providerType: "",
-wantDelay:    12 * time.Second, // Defaults to polygon
-},
-{
-name:         "unknown provider",
-providerType: "unknown",
-wantDelay:    10 * time.Second,
-},
-}
+	tests := []struct {
+		name         string
+		providerType string
+		wantDelay    time.Duration
+	}{
+		{
+			name:         "polygon provider",
+			providerType: "polygon",
+			wantDelay:    12 * time.Second,
+		},
+		{
+			name:         "default provider",
+			providerType: "",
+			wantDelay:    12 * time.Second, // Defaults to polygon
+		},
+		{
+			name:         "unknown provider",
+			providerType: "unknown",
+			wantDelay:    10 * time.Second,
+		},
+	}
 
-for _, tt := range tests {
-t.Run(tt.name, func(t *testing.T) {
-db := setupProvidersTestDB(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := setupProvidersTestDB(t)
 
-settingService := models.NewSettingService(db.DB)
-if tt.providerType != "" {
-settingService.SetValue("DATA_PROVIDER_TYPE", tt.providerType, "")
-}
+			settingService := models.NewSettingService(db.DB)
+			if tt.providerType != "" {
+				settingService.SetValue("DATA_PROVIDER_TYPE", tt.providerType, "")
+			}
 
-symbolService := models.NewSymbolService(db.DB)
-service := providers.NewService(symbolService, settingService)
+			symbolService := models.NewSymbolService(db.DB)
+			service := providers.NewService(symbolService, settingService)
 
-delay := service.GetRateLimitDelay()
-if delay != tt.wantDelay {
-t.Errorf("Expected delay %v, got %v", tt.wantDelay, delay)
-}
-})
-}
+			delay := service.GetRateLimitDelay()
+			if delay != tt.wantDelay {
+				t.Errorf("Expected delay %v, got %v", tt.wantDelay, delay)
+			}
+		})
+	}
 }
 
 // TestDebugLogging tests that debug logging can be controlled
 func TestDebugLogging(t *testing.T) {
-db := setupProvidersTestDB(t)
+	db := setupProvidersTestDB(t)
 
-settingService := models.NewSettingService(db.DB)
-settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
-settingService.SetValue("POLYGON_API_KEY", "test_key_12345", "")
+	settingService := models.NewSettingService(db.DB)
+	settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
+	settingService.SetValue("POLYGON_API_KEY", "test_key_12345", "")
 
-symbolService := models.NewSymbolService(db.DB)
-service := providers.NewService(symbolService, settingService)
-
-// Test with DEBUG_PROVIDERS=1
-os.Setenv("DEBUG_PROVIDERS", "1")
-defer os.Unsetenv("DEBUG_PROVIDERS")
-
-// This test just verifies that the service doesn't panic when DEBUG_PROVIDERS is set
+	symbolService := models.NewSymbolService(db.DB)
+	// Test with DEBUG_PROVIDERS=1
+	os.Setenv("DEBUG_PROVIDERS", "1")
+	defer os.Unsetenv("DEBUG_PROVIDERS")
+	serviceDebug := providers.NewService(symbolService, settingService)
+	// This test just verifies that the service doesn't panic when DEBUG_PROVIDERS is set
 	// In a real scenario, we'd test actual provider behavior
-if service == nil {
-t.Fatal("Expected service, got nil")
-}
-
-// Test without DEBUG_PROVIDERS
-os.Unsetenv("DEBUG_PROVIDERS")
-if service == nil {
-t.Fatal("Expected service, got nil")
-}
-}
-
-// Helper function to check if a string contains a substring
-func stringContains(s, substr string) bool {
-for i := 0; i <= len(s)-len(substr); i++ {
-if s[i:i+len(substr)] == substr {
-return true
-}
-}
-return false
+	if serviceDebug == nil {
+		t.Fatal("Expected service with debug enabled, got nil")
+	}
+	// Test without DEBUG_PROVIDERS
+	os.Unsetenv("DEBUG_PROVIDERS")
+	service := providers.NewService(symbolService, settingService)
+	if service == nil {
+		t.Fatal("Expected service with debug disabled, got nil")
+	}
 }

@@ -261,7 +261,7 @@ func (s *Service) GetAPIKeyStatus() *APIKeyStatus {
 	return status
 }
 
-// getRateLimitDelay returns the rate limit delay based on the configured provider
+// GetRateLimitDelay returns the rate limit delay based on the configured provider
 func (s *Service) GetRateLimitDelay() time.Duration {
 	providerType := strings.ToLower(strings.TrimSpace(s.settingService.GetValue("DATA_PROVIDER_TYPE")))
 	if providerType == "" {

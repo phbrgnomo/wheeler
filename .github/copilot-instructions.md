@@ -27,6 +27,16 @@ Services use **ID-based CRUD** operations (`GetByID`, `Update`, `Delete`) for we
 - No migration files; database setup uses `CREATE TABLE IF NOT EXISTS`
 - SQLite WAL mode with foreign keys enabled: `?_busy_timeout=10000&_journal_mode=WAL&_foreign_keys=on`
 
+### Market Data Providers (`internal/providers/`)
+- Defines a common interface and types for market data providers (quotes, aggregates, ticker metadata)
+- Application code depends on this abstraction rather than any specific vendor
+- New providers should implement this interface and be registered via the provider layer
+
+### Polygon Provider (`internal/polygon/`)
+- Default implementation of the market data provider interface using the Polygon.io REST API
+- `client.go`: HTTP client wrapper around Polygon.io endpoints
+- `service.go`: Business logic layer for fetching quotes, aggregates, and ticker details via the provider interface
+
 ### Web Layer (`internal/web/`)
 **Handler Organization**:
 - `server.go`: Server struct initialization, routing, template loading with custom functions
