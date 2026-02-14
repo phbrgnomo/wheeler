@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"stonks/internal/models"
 	"strings"
 	"time"
@@ -11,7 +12,6 @@ import (
 
 // Service provides market data integration for Wheeler using provider abstraction
 type Service struct {
-	provider       Provider
 	symbolService  *models.SymbolService
 	settingService *models.SettingService
 }
@@ -40,14 +40,16 @@ func (s *Service) getProvider() (Provider, error) {
 			return nil, fmt.Errorf("Polygon API key not configured - please set your API key in Settings")
 		}
 
-		// Log masked API key for debugging
-		var maskedKey string
-		if len(apiKey) > 6 {
-			maskedKey = apiKey[:3] + "..." + apiKey[len(apiKey)-3:]
-		} else {
-			maskedKey = "***"
+		// Optionally log masked API key for debugging when DEBUG_PROVIDERS is enabled
+		if os.Getenv("DEBUG_PROVIDERS") == "1" {
+			var maskedKey string
+			if len(apiKey) > 6 {
+				maskedKey = apiKey[:3] + "..." + apiKey[len(apiKey)-3:]
+			} else {
+				maskedKey = "***"
+			}
+			log.Printf("[PROVIDER] Using %s provider with API key: %s", strings.ToUpper(providerType), maskedKey)
 		}
-		log.Printf("[PROVIDER] Using %s provider with API key: %s", strings.ToUpper(providerType), maskedKey)
 
 		return NewPolygonProvider(apiKey), nil
 	default:
@@ -62,6 +64,11 @@ func (s *Service) UpdateSymbolPrice(ctx context.Context, symbol string) error {
 		return fmt.Errorf("failed to get provider: %w", err)
 	}
 
+	return s.updateSymbolPriceWithProvider(ctx, provider, symbol)
+}
+
+// updateSymbolPriceWithProvider updates a single symbol's price using a pre-fetched provider
+func (s *Service) updateSymbolPriceWithProvider(ctx context.Context, provider Provider, symbol string) error {
 	log.Printf("[PROVIDER] Updating price for symbol: %s using %s", symbol, provider.Name())
 
 	// Get current price from provider
@@ -106,17 +113,20 @@ func (s *Service) UpdateAllSymbolPrices(ctx context.Context) error {
 
 	log.Printf("[PROVIDER] Starting prioritized bulk price update for %d symbols using %s", len(symbols), provider.Name())
 
+	// Get rate limit configuration from provider (or use default)
+	rateLimitDelay := s.GetRateLimitDelay()
+
 	var updated, failed int
 	for _, symbol := range symbols {
-		if err := s.UpdateSymbolPrice(ctx, symbol); err != nil {
+		if err := s.updateSymbolPriceWithProvider(ctx, provider, symbol); err != nil {
 			log.Printf("[PROVIDER] Failed to update %s: %v", symbol, err)
 			failed++
 		} else {
 			updated++
 		}
 
-		// Rate limiting: Polygon.io Free tier allows 5 requests per minute (approx. 1 request every 12 seconds)
-		time.Sleep(12 * time.Second)
+		// Rate limiting to respect provider API limits
+		time.Sleep(rateLimitDelay)
 	}
 
 	log.Printf("[PROVIDER] Prioritized bulk price update complete: %d updated, %d failed", updated, failed)
@@ -211,22 +221,61 @@ func (s *Service) TestConnection(ctx context.Context) error {
 
 // GetAPIKeyStatus returns information about the current API key configuration
 func (s *Service) GetAPIKeyStatus() *APIKeyStatus {
-	apiKey := s.settingService.GetValue("POLYGON_API_KEY")
-	
+	providerType := strings.ToLower(strings.TrimSpace(s.settingService.GetValue("DATA_PROVIDER_TYPE")))
+	if providerType == "" {
+		providerType = "polygon" // Default to Polygon for backwards compatibility
+	}
+
+	var apiKey string
+
+	switch providerType {
+	case "polygon":
+		apiKey = s.settingService.GetValue("POLYGON_API_KEY")
+		// Add additional providers here as they are supported, for example:
+		// case "alpaca":
+		//     apiKey = s.settingService.GetValue("ALPACA_API_KEY")
+	default:
+		// Unknown or unsupported provider type; report as not configured
+		return &APIKeyStatus{
+			Configured: false,
+			Masked:     "",
+		}
+	}
+
 	status := &APIKeyStatus{
 		Configured: apiKey != "",
 		Masked:     "",
 	}
 
-	if status.Configured {
-		if len(apiKey) > 6 {
-			status.Masked = apiKey[:3] + "..." + apiKey[len(apiKey)-3:]
-		} else {
-			status.Masked = strings.Repeat("*", len(apiKey))
-		}
+	if !status.Configured {
+		return status
+	}
+
+	// Mask the API key so only a small portion is visible
+	if len(apiKey) > 6 {
+		status.Masked = apiKey[:3] + "..." + apiKey[len(apiKey)-3:]
+	} else {
+		status.Masked = strings.Repeat("*", len(apiKey))
 	}
 
 	return status
+}
+
+// getRateLimitDelay returns the rate limit delay based on the configured provider
+func (s *Service) GetRateLimitDelay() time.Duration {
+	providerType := strings.ToLower(strings.TrimSpace(s.settingService.GetValue("DATA_PROVIDER_TYPE")))
+	if providerType == "" {
+		providerType = "polygon"
+	}
+
+	switch providerType {
+	case "polygon":
+		// Polygon.io Free tier allows 5 requests per minute (approx. 1 request every 12 seconds)
+		return 12 * time.Second
+	default:
+		// Conservative default for unknown providers
+		return 10 * time.Second
+	}
 }
 
 // SymbolInfo represents enriched symbol information from a provider
