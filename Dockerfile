@@ -17,7 +17,7 @@ COPY . .
 RUN CGO_ENABLED=1 go build -o wheeler .
 
 # Runtime stage
-FROM alpine:latest
+FROM alpine:3.19
 
 WORKDIR /app
 
