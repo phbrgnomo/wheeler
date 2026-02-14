@@ -31,7 +31,7 @@ func (s *Service) getProvider() (Provider, error) {
 	if providerType == "" {
 		providerType = "polygon"
 	}
-	providerType = strings.ToLower(providerType)
+	providerType = strings.ToLower(strings.TrimSpace(providerType))
 
 	switch providerType {
 	case "polygon":
@@ -48,7 +48,7 @@ func (s *Service) getProvider() (Provider, error) {
 			} else {
 				maskedKey = "***"
 			}
-			log.Printf("[PROVIDER] Using %s provider with API key: %s", strings.ToUpper(providerType), maskedKey)
+			log.Printf("[PROVIDER] Using %s provider with API key: %s (DEBUG_PROVIDERS=1 - do not enable in production)", strings.ToUpper(providerType), maskedKey)
 		}
 
 		return NewPolygonProvider(apiKey), nil
@@ -125,8 +125,16 @@ func (s *Service) UpdateAllSymbolPrices(ctx context.Context) error {
 			updated++
 		}
 
-		// Rate limiting to respect provider API limits
-		time.Sleep(rateLimitDelay)
+		// Rate limiting to respect provider API limits, while honoring context cancellation
+		if rateLimitDelay > 0 {
+			select {
+			case <-ctx.Done():
+				log.Printf("[PROVIDER] Prioritized bulk price update canceled during rate limiting: %v", ctx.Err())
+				return ctx.Err()
+			case <-time.After(rateLimitDelay):
+				// continue to next symbol
+			}
+		}
 	}
 
 	log.Printf("[PROVIDER] Prioritized bulk price update complete: %d updated, %d failed", updated, failed)
@@ -268,13 +276,9 @@ func (s *Service) Name() string {
 		providerType = "polygon"
 	}
 
-	switch providerType {
-	case "polygon":
-		return "Polygon.io"
-	default:
-		return strings.Title(providerType)
-	}
+	return providerType
 }
+
 
 // GetRateLimitDelay returns the rate limit delay based on the configured provider
 func (s *Service) GetRateLimitDelay() time.Duration {

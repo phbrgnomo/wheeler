@@ -49,6 +49,8 @@ func (m *MockProvider) Name() string {
 	return "MockProvider"
 }
 
+var _ Provider = (*PolygonProvider)(nil)
+
 func TestProviderInterface(t *testing.T) {
 	ctx := context.Background()
 	mock := &MockProvider{name: "TestProvider"}

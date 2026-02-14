@@ -77,10 +77,14 @@ func TestGetAPIKeyStatus_Polygon(t *testing.T) {
 
 			settingService := models.NewSettingService(db.DB)
 			if tt.providerType != "" {
-				settingService.SetValue("DATA_PROVIDER_TYPE", tt.providerType, "")
+				if err := settingService.SetValue("DATA_PROVIDER_TYPE", tt.providerType, ""); err != nil {
+					t.Fatalf("failed to set DATA_PROVIDER_TYPE: %v", err)
+				}
 			}
 			if tt.apiKey != "" {
-				settingService.SetValue("POLYGON_API_KEY", tt.apiKey, "")
+				if err := settingService.SetValue("POLYGON_API_KEY", tt.apiKey, ""); err != nil {
+					t.Fatalf("failed to set POLYGON_API_KEY: %v", err)
+				}
 			}
 
 			symbolService := models.NewSymbolService(db.DB)
@@ -172,16 +176,23 @@ func TestUpdateAllSymbolPrices_MissingAPIKey(t *testing.T) {
 
 	settingService := models.NewSettingService(db.DB)
 	settingService.SetValue("DATA_PROVIDER_TYPE", "polygon", "")
-	// No API key
 
+	// No API key
 	symbolService := models.NewSymbolService(db.DB)
+
 	// Create test symbols
-	symbolService.Create("AAPL")
-	symbolService.Create("GOOGL")
+	_, err := symbolService.Create("AAPL")
+	if err != nil {
+		t.Fatalf("failed to create symbol AAPL: %v", err)
+	}
+	_, err = symbolService.Create("GOOGL")
+	if err != nil {
+		t.Fatalf("failed to create symbol GOOGL: %v", err)
+	}
 
 	service := providers.NewService(symbolService, settingService)
 
-	err := service.UpdateAllSymbolPrices(ctx)
+	err = service.UpdateAllSymbolPrices(ctx)
 	if err == nil {
 		t.Fatal("Expected error without API key, got nil")
 	}

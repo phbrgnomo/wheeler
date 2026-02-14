@@ -23,8 +23,8 @@ Services use **ID-based CRUD** operations (`GetByID`, `Update`, `Delete`) for we
 - **Unique constraints** prevent duplicate business records (e.g., same option opened twice)
 
 **Schema Management**:
-- `schema.sql` is the single source of truth (embedded via `//go:embed`)
-- No migration files; database setup uses `CREATE TABLE IF NOT EXISTS`
+- SQL migrations live in `internal/database/migrations/*.sql` and are embedded via `//go:embed`.
+- Migrations are the source of truth for schema changes; add new migrations for any schema update instead of modifying existing migrations or relying on ad-hoc `CREATE TABLE IF NOT EXISTS`.
 - SQLite WAL mode with foreign keys enabled: `?_busy_timeout=10000&_journal_mode=WAL&_foreign_keys=on`
 
 ### Market Data Providers (`internal/providers/`)
