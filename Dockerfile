@@ -17,7 +17,7 @@ COPY . .
 RUN CGO_ENABLED=1 go build -o wheeler .
 
 # Runtime stage
-FROM alpine:latest
+FROM alpine:3.19
 
 WORKDIR /app
 
@@ -34,6 +34,15 @@ COPY --from=builder /app/internal/database/wheel_strategy_example.sql ./internal
 
 # Create data directory for SQLite database
 RUN mkdir -p /app/data
+
+# Create an unprivileged system user and set ownership of app files
+# Use Alpine addgroup/adduser to create a system user `appuser` with home `/app`
+RUN addgroup -S appuser \
+ && adduser -S -G appuser -h /app appuser \
+ && chown -R appuser:appuser /app
+
+# Switch to the unprivileged user for runtime
+USER appuser
 
 # Expose the web server port
 EXPOSE 8080
