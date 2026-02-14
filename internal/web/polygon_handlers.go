@@ -20,11 +20,52 @@ func (s *Server) polygonTestHandler(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[POLYGON API] Testing API connection")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	package web
 
-	// Test the connection
-	err := s.providerService.TestConnection(ctx)
-	
+	import (
+		"context"
+		"encoding/json"
+		"fmt"
+		"log"
+		"net/http"
+		"strings"
+		"time"
+	)
+
+	// polygonTestHandler tests the data provider API connection
+	func (s *Server) polygonTestHandler(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		providerName := s.providerService.Name()
+		logPrefix := fmt.Sprintf("[%s API]", strings.ToUpper(providerName))
+		log.Printf("%s Testing API connection", logPrefix)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		err := s.providerService.TestConnection(ctx)
+		
+		response := map[string]interface{}{
+			"success":  err == nil,
+			"provider": providerName,
+		}
+
+		if err != nil {
+			response["error"] = err.Error()
+			log.Printf("%s Connection test failed: %v", logPrefix, err)
+		} else {
+			response["message"] = "API key is valid and connection successful"
+			log.Printf("%s Connection test successful", logPrefix)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			log.Printf("%s Error encoding test response: %v", logPrefix, err)
+		}
+	}
 	response := map[string]interface{}{
 		"success": err == nil,
 	}

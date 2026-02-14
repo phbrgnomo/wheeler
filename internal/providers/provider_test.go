@@ -59,6 +59,17 @@ func TestProviderInterface(t *testing.T) {
 	}
 
 	// Test GetQuote
+	// Test with custom quote function
+	mock.quoteFunc = func(ctx context.Context, symbol string) (*Quote, error) {
+		return &Quote{Symbol: symbol, Price: 150.5}, nil
+	}
+	quote, err = mock.GetQuote(ctx, "TSLA")
+	if err != nil {
+		t.Fatalf("GetQuote with custom func failed: %v", err)
+	}
+	if quote.Price != 150.5 {
+		t.Errorf("Expected custom price 150.5, got %.2f", quote.Price)
+	}
 	quote, err := mock.GetQuote(ctx, "AAPL")
 	if err != nil {
 		t.Fatalf("GetQuote failed: %v", err)
