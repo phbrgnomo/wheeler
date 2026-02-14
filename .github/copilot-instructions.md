@@ -49,17 +49,6 @@ Services use **ID-based CRUD** operations (`GetByID`, `Update`, `Delete`) for we
 - Shared component: `_symbol_modal.html` for reusable symbol entry
 - Chart.js for interactive visualizations (scatter plots, pie charts with click navigation)
 
-### Market Data Providers (`internal/providers/`)
-- Defines a common interface and types for market data providers (quotes, aggregates, ticker metadata)
-- Application code depends on this abstraction rather than any specific vendor
-- New providers should implement this interface and be registered via the provider layer
-
-### Polygon Provider (`internal/polygon/`)
-- Default implementation of the market data provider interface using the Polygon.io REST API
-- `client.go`: HTTP client wrapper around Polygon.io endpoints
-- `service.go`: Business logic layer for fetching quotes, aggregates, and ticker details via the provider interface
-- API key stored in `settings` table, retrieved via `SettingService`
-
 ## Development Commands
 
 ### Quick Start

@@ -108,8 +108,12 @@ func TestGetAPIKeyStatus_UnsupportedProvider(t *testing.T) {
 	db := setupProvidersTestDB(t)
 
 	settingService := models.NewSettingService(db.DB)
-	settingService.SetValue("DATA_PROVIDER_TYPE", "unknown_provider", "")
-	settingService.SetValue("POLYGON_API_KEY", "some_key", "")
+	if err := settingService.SetValue("DATA_PROVIDER_TYPE", "unknown_provider", ""); err != nil {
+		t.Fatalf("failed to set DATA_PROVIDER_TYPE: %v", err)
+	}
+	if err := settingService.SetValue("POLYGON_API_KEY", "some_key", ""); err != nil {
+		t.Fatalf("failed to set POLYGON_API_KEY: %v", err)
+	}
 
 	symbolService := models.NewSymbolService(db.DB)
 	service := providers.NewService(symbolService, settingService)

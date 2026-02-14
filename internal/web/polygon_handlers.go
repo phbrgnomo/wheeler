@@ -91,8 +91,8 @@ func (s *Server) polygonUpdatePricesHandler(w http.ResponseWriter, r *http.Reque
 				updated++
 			}
 
-			// Rate limiting for free tier (5 requests per minute)
-			time.Sleep(12 * time.Second)
+			// Rate limiting based on provider configuration
+			time.Sleep(s.providerService.GetRateLimitDelay())
 		}
 	} else {
 		// Update specific symbols
@@ -107,9 +107,9 @@ func (s *Server) polygonUpdatePricesHandler(w http.ResponseWriter, r *http.Reque
 				updated++
 			}
 
-			// Rate limiting
+			// Rate limiting based on provider configuration
 			if len(request.Symbols) > 1 {
-				time.Sleep(12 * time.Second)
+				time.Sleep(s.providerService.GetRateLimitDelay())
 			}
 		}
 	}
@@ -158,7 +158,7 @@ func (s *Server) polygonSymbolInfoHandler(w http.ResponseWriter, r *http.Request
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Get symbol info from Polygon
+	// Get symbol info from configured data provider
 	info, err := s.providerService.FetchSymbolDetails(ctx, symbol)
 	if err != nil {
 		log.Printf("[POLYGON API] Error getting symbol info for %s: %v", symbol, err)
@@ -282,8 +282,8 @@ func (s *Server) polygonFetchDividendsHandler(w http.ResponseWriter, r *http.Req
 				})
 			}
 
-			// Rate limiting for free tier (5 requests per minute)
-			time.Sleep(12 * time.Second)
+			// Rate limiting based on provider configuration
+			time.Sleep(s.providerService.GetRateLimitDelay())
 		}
 	} else {
 		// Fetch dividends for specific symbols
@@ -304,9 +304,9 @@ func (s *Server) polygonFetchDividendsHandler(w http.ResponseWriter, r *http.Req
 				})
 			}
 
-			// Rate limiting
+			// Rate limiting based on provider configuration
 			if len(request.Symbols) > 1 {
-				time.Sleep(12 * time.Second)
+				time.Sleep(s.providerService.GetRateLimitDelay())
 			}
 		}
 	}
