@@ -16,6 +16,27 @@ type Service struct {
 	settingService *models.SettingService
 }
 
+const (
+	providerTypePolygon  = "polygon"
+	providerTypeGoogle   = "google_finance"
+	providerTypeYFinance = "yfinance"
+)
+
+// normalizeProviderType keeps user-facing aliases in one place and returns
+// the canonical identifier used by provider selection, status, and throttling.
+func normalizeProviderType(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", providerTypePolygon:
+		return providerTypePolygon
+	case "google", "googlefinance", providerTypeGoogle:
+		return providerTypeGoogle
+	case "yahoo", "yahoo_finance", providerTypeYFinance:
+		return providerTypeYFinance
+	default:
+		return strings.ToLower(strings.TrimSpace(raw))
+	}
+}
+
 // BulkPriceUpdateResult captures aggregate information from a bulk price update run
 type BulkPriceUpdateResult struct {
 	Updated int
@@ -47,14 +68,10 @@ func NewService(symbolService *models.SymbolService, settingService *models.Sett
 // getProvider returns the configured provider with API key
 func (s *Service) getProvider() (Provider, error) {
 	// Determine which data provider to use, defaulting to Polygon for backwards compatibility
-	providerType := s.settingService.GetValue("DATA_PROVIDER_TYPE")
-	if providerType == "" {
-		providerType = "polygon"
-	}
-	providerType = strings.ToLower(strings.TrimSpace(providerType))
+	providerType := normalizeProviderType(s.settingService.GetValue("DATA_PROVIDER_TYPE"))
 
 	switch providerType {
-	case "polygon":
+	case providerTypePolygon:
 		apiKey := s.settingService.GetValue("POLYGON_API_KEY")
 		if apiKey == "" {
 			return nil, fmt.Errorf("Polygon API key not configured - please set your API key in Settings")
@@ -72,6 +89,14 @@ func (s *Service) getProvider() (Provider, error) {
 		}
 
 		return NewPolygonProvider(apiKey), nil
+	case providerTypeGoogle:
+		exchange := strings.ToUpper(strings.TrimSpace(s.settingService.GetValue("GOOGLE_FINANCE_EXCHANGE")))
+		if exchange == "" {
+			exchange = "NASDAQ"
+		}
+		return NewGoogleFinanceProvider(exchange), nil
+	case providerTypeYFinance:
+		return NewYFinanceProvider(), nil
 	default:
 		return nil, fmt.Errorf("unsupported data provider type: %s", providerType)
 	}
@@ -231,7 +256,7 @@ func (s *Service) FetchDividendHistoryForSymbols(ctx context.Context, symbols []
 
 	log.Printf("[PROVIDER] Starting dividend fetch for %d symbols using %s", len(normalized), provider.Name())
 	rateLimitDelay := s.GetRateLimitDelay()
-	result := &BulkDividendFetchResult{}
+	result := &BulkDividendFetchResult{Results: []DividendFetchRecord{}}
 
 	for idx, symbol := range normalized {
 		result.Processed++
@@ -269,16 +294,15 @@ func (s *Service) TestConnection(ctx context.Context) error {
 
 // GetAPIKeyStatus returns information about the current API key configuration
 func (s *Service) GetAPIKeyStatus() *APIKeyStatus {
-	providerType := strings.ToLower(strings.TrimSpace(s.settingService.GetValue("DATA_PROVIDER_TYPE")))
-	if providerType == "" {
-		providerType = "polygon" // Default to Polygon for backwards compatibility
-	}
+	providerType := normalizeProviderType(s.settingService.GetValue("DATA_PROVIDER_TYPE"))
 
 	var apiKey string
 
 	switch providerType {
-	case "polygon":
+	case providerTypePolygon:
 		apiKey = s.settingService.GetValue("POLYGON_API_KEY")
+	case providerTypeGoogle, providerTypeYFinance:
+		return &APIKeyStatus{Configured: true, Masked: "Not required", Valid: true}
 		// Add additional providers here as they are supported, for example:
 		// case "alpaca":
 		//     apiKey = s.settingService.GetValue("ALPACA_API_KEY")
@@ -311,25 +335,21 @@ func (s *Service) GetAPIKeyStatus() *APIKeyStatus {
 
 // Name returns the name of the configured provider
 func (s *Service) Name() string {
-	providerType := strings.ToLower(strings.TrimSpace(s.settingService.GetValue("DATA_PROVIDER_TYPE")))
-	if providerType == "" {
-		providerType = "polygon"
-	}
-
-	return providerType
+	return normalizeProviderType(s.settingService.GetValue("DATA_PROVIDER_TYPE"))
 }
 
 // GetRateLimitDelay returns the rate limit delay based on the configured provider
 func (s *Service) GetRateLimitDelay() time.Duration {
-	providerType := strings.ToLower(strings.TrimSpace(s.settingService.GetValue("DATA_PROVIDER_TYPE")))
-	if providerType == "" {
-		providerType = "polygon"
-	}
+	providerType := normalizeProviderType(s.settingService.GetValue("DATA_PROVIDER_TYPE"))
 
 	switch providerType {
-	case "polygon":
+	case providerTypePolygon:
 		// Polygon.io Free tier allows 5 requests per minute (approx. 1 request every 12 seconds)
 		return 12 * time.Second
+	case providerTypeGoogle:
+		return 2 * time.Second
+	case providerTypeYFinance:
+		return 2 * time.Second
 	default:
 		// Conservative default for unknown providers
 		return 10 * time.Second

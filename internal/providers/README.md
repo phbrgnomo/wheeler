@@ -21,6 +21,20 @@ type Provider interface {
 ### Current Providers
 
 - **Polygon.io** (`PolygonProvider`) - Default provider for stock market data
+- **Google Finance** (`GoogleFinanceProvider`) - Public quote-page provider; no API key required
+- **Yahoo Finance via yfinance** (`YFinanceProvider`) - Native Go client; no API key required
+
+Google Finance is accessed through its public quote page because it does not
+provide a supported public REST API. It supports quotes and basic ticker
+details, but not dividend history. Set `DATA_PROVIDER_TYPE` to
+`google_finance` and optionally set `GOOGLE_FINANCE_EXCHANGE` (default:
+`NASDAQ`). Symbols can also include an explicit exchange, such as
+`NASDAQ:AAPL`.
+
+The yfinance provider uses Yahoo Finance ticker symbols, such as `AAPL` or
+`PETR3.SA`, and calls Yahoo Finance's chart endpoint directly from Go. It does
+not require Python or an API key. Set `DATA_PROVIDER_TYPE` to `yfinance`.
+`YFINANCE_BASE_URL` can override the Yahoo endpoint for a proxy or tests.
 
 ## Adding a New Provider
 
@@ -35,7 +49,8 @@ package providers
 
 import (
     "context"
-    "fmt"
+    "net/http"
+    "time"
 )
 
 type AlphaVantageProvider struct {

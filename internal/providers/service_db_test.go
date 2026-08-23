@@ -1,11 +1,12 @@
-package test
+package providers
 
 import (
+	"bytes"
 	"context"
-	"os"
+	"log"
+	"path/filepath"
 	"stonks/internal/database"
 	"stonks/internal/models"
-	"stonks/internal/providers"
 	"strings"
 	"testing"
 	"time"
@@ -13,11 +14,7 @@ import (
 
 // setupProvidersTestDB creates a temporary test database for provider tests
 func setupProvidersTestDB(t *testing.T) *database.DB {
-	testDBPath := "./data/providers_test.db"
-
-	if err := os.Remove(testDBPath); err != nil && !os.IsNotExist(err) {
-		t.Logf("Note: Could not delete existing test database: %v", err)
-	}
+	testDBPath := filepath.Join(t.TempDir(), "providers_test.db")
 
 	db, err := database.NewDB(testDBPath)
 	if err != nil {
@@ -26,7 +23,6 @@ func setupProvidersTestDB(t *testing.T) *database.DB {
 
 	t.Cleanup(func() {
 		db.Close()
-		os.Remove(testDBPath)
 	})
 
 	return db
@@ -88,7 +84,7 @@ func TestGetAPIKeyStatus_Polygon(t *testing.T) {
 			}
 
 			symbolService := models.NewSymbolService(db.DB)
-			service := providers.NewService(symbolService, settingService)
+			service := NewService(symbolService, settingService)
 
 			status := service.GetAPIKeyStatus()
 
@@ -116,7 +112,7 @@ func TestGetAPIKeyStatus_UnsupportedProvider(t *testing.T) {
 	}
 
 	symbolService := models.NewSymbolService(db.DB)
-	service := providers.NewService(symbolService, settingService)
+	service := NewService(symbolService, settingService)
 
 	status := service.GetAPIKeyStatus()
 
@@ -141,7 +137,7 @@ func TestUpdateSymbolPrice_MissingAPIKey(t *testing.T) {
 	// Intentionally don't set POLYGON_API_KEY to test missing key scenario
 
 	symbolService := models.NewSymbolService(db.DB)
-	service := providers.NewService(symbolService, settingService)
+	service := NewService(symbolService, settingService)
 
 	err := service.UpdateSymbolPrice(ctx, "AAPL")
 	if err == nil {
@@ -167,7 +163,7 @@ func TestUpdateSymbolPrice_UnsupportedProvider(t *testing.T) {
 	}
 
 	symbolService := models.NewSymbolService(db.DB)
-	service := providers.NewService(symbolService, settingService)
+	service := NewService(symbolService, settingService)
 
 	err := service.UpdateSymbolPrice(ctx, "AAPL")
 	if err == nil {
@@ -202,7 +198,7 @@ func TestUpdateAllSymbolPrices_MissingAPIKey(t *testing.T) {
 		t.Fatalf("failed to create symbol GOOGL: %v", err)
 	}
 
-	service := providers.NewService(symbolService, settingService)
+	service := NewService(symbolService, settingService)
 
 	_, err = service.UpdateAllSymbolPrices(ctx)
 	if err == nil {
@@ -222,7 +218,7 @@ func TestFetchSymbolDetails_MissingAPIKey(t *testing.T) {
 	// No API key - should fail
 
 	symbolService := models.NewSymbolService(db.DB)
-	service := providers.NewService(symbolService, settingService)
+	service := NewService(symbolService, settingService)
 
 	_, err := service.FetchSymbolDetails(ctx, "AAPL")
 	if err == nil {
@@ -246,7 +242,7 @@ func TestFetchDividendHistory_MissingAPIKey(t *testing.T) {
 	// No API key
 
 	symbolService := models.NewSymbolService(db.DB)
-	service := providers.NewService(symbolService, settingService)
+	service := NewService(symbolService, settingService)
 
 	_, err := service.FetchDividendHistory(ctx, "AAPL", 10)
 	if err == nil {
@@ -270,7 +266,7 @@ func TestTestConnection_MissingAPIKey(t *testing.T) {
 	// No API key
 
 	symbolService := models.NewSymbolService(db.DB)
-	service := providers.NewService(symbolService, settingService)
+	service := NewService(symbolService, settingService)
 
 	err := service.TestConnection(ctx)
 	if err == nil {
@@ -314,7 +310,7 @@ func TestGetRateLimitDelay(t *testing.T) {
 			}
 
 			symbolService := models.NewSymbolService(db.DB)
-			service := providers.NewService(symbolService, settingService)
+			service := NewService(symbolService, settingService)
 
 			delay := service.GetRateLimitDelay()
 			if delay != tt.wantDelay {
@@ -324,7 +320,8 @@ func TestGetRateLimitDelay(t *testing.T) {
 	}
 }
 
-// TestDebugLogging tests that debug logging can be controlled
+// TestDebugLogging exercises the provider-selection branch and verifies that
+// debug output masks, rather than exposes, the configured API key.
 func TestDebugLogging(t *testing.T) {
 	db := setupProvidersTestDB(t)
 
@@ -337,19 +334,21 @@ func TestDebugLogging(t *testing.T) {
 	}
 
 	symbolService := models.NewSymbolService(db.DB)
-	// Test with DEBUG_PROVIDERS=1
-	os.Setenv("DEBUG_PROVIDERS", "1")
-	defer os.Unsetenv("DEBUG_PROVIDERS")
-	serviceDebug := providers.NewService(symbolService, settingService)
-	// This test just verifies that the service doesn't panic when DEBUG_PROVIDERS is set
-	// In a real scenario, we'd test actual provider behavior
-	if serviceDebug == nil {
-		t.Fatal("Expected service with debug enabled, got nil")
+	service := NewService(symbolService, settingService)
+	t.Setenv("DEBUG_PROVIDERS", "1")
+
+	var logs bytes.Buffer
+	previousOutput := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previousOutput) })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := service.TestConnection(ctx); err == nil {
+		t.Fatal("Expected cancelled connection test to fail")
 	}
-	// Test without DEBUG_PROVIDERS
-	os.Unsetenv("DEBUG_PROVIDERS")
-	service := providers.NewService(symbolService, settingService)
-	if service == nil {
-		t.Fatal("Expected service with debug disabled, got nil")
+
+	if !strings.Contains(logs.String(), "Using POLYGON provider with API key: tes...345") {
+		t.Fatalf("Expected masked provider debug log, got %q", logs.String())
 	}
 }

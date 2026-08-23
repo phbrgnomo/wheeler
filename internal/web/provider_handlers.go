@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"stonks/internal/providers"
 )
+
+var symbolPattern = regexp.MustCompile(`^[A-Z0-9.\-]{1,10}$`)
 
 func (s *Server) providerLogPrefix() string {
 	name := strings.ToUpper(strings.TrimSpace(s.providerService.Name()))
@@ -137,6 +140,10 @@ func (s *Server) providerSymbolInfoHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	symbol := strings.ToUpper(path)
+	if !symbolPattern.MatchString(symbol) {
+		http.Error(w, "Invalid symbol", http.StatusBadRequest)
+		return
+	}
 	logPrefix := s.providerLogPrefix()
 	log.Printf("%s Getting symbol info for: %s", logPrefix, symbol)
 
@@ -254,7 +261,7 @@ func (s *Server) providerFetchDividendsHandler(w http.ResponseWriter, r *http.Re
 
 	result, err := s.providerService.FetchDividendHistoryForSymbols(ctx, symbols, request.Limit)
 	if result == nil {
-		result = &providers.BulkDividendFetchResult{}
+		result = &providers.BulkDividendFetchResult{Results: []providers.DividendFetchRecord{}}
 	}
 
 	response := map[string]interface{}{

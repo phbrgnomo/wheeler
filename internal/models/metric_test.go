@@ -23,10 +23,13 @@ func TestMetricService_ComprehensiveSnapshot(t *testing.T) {
 	positionService := NewLongPositionService(testDB.DB)
 	optionService := NewOptionService(testDB.DB)
 
-	// Create test treasury data with specific dates spanning several months
-	testDate1 := time.Now().AddDate(0, -4, 0) // 4 months ago
-	testDate2 := time.Now().AddDate(0, -2, 0) // 2 months ago  
-	testDate3 := time.Now().AddDate(0, 0, -30) // 30 days ago
+	// Use local midday to keep the fixture on the intended SQLite calendar date
+	// after timezone normalization.
+	now := time.Now()
+	baseDate := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
+	testDate1 := baseDate.AddDate(0, -4, 0)  // 4 months ago
+	testDate2 := baseDate.AddDate(0, -2, 0)  // 2 months ago
+	testDate3 := baseDate.AddDate(0, 0, -30) // 30 days ago
 
 	// Treasury 1: Active for all 3 dates (purchased before testDate1)
 	maturityDate1 := testDate1.AddDate(0, 3, 0) // 3 months later
@@ -92,7 +95,7 @@ func TestMetricService_ComprehensiveSnapshot(t *testing.T) {
 
 	// Create test options with specific dates
 	expirationDate := testDate3.AddDate(0, 1, 0) // 1 month after testDate3
-	
+
 	// Put option 1: AAPL opened before testDate1, still active (strike $140, 2 contracts, exposure = 140 * 2 * 100 = $28000)
 	_, err = optionService.Create("AAPL", "Put", testDate1.AddDate(0, 0, -1), 140.0, expirationDate, 3.50, 2)
 	if err != nil {

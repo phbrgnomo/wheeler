@@ -62,6 +62,10 @@ func formatProviderDisplayName(raw string) string {
 	switch lower {
 	case "polygon":
 		return "Polygon.io"
+	case "google_finance":
+		return "Google Finance"
+	case "yfinance":
+		return "Yahoo Finance (yfinance)"
 	default:
 		runes := []rune(trimmed)
 		runes[0] = unicode.ToUpper(runes[0])

@@ -280,7 +280,7 @@ wheeler/
 │       ├── position_handlers.go     # Position management handlers
 │       ├── treasury_handlers.go     # Treasury management handlers
 │       ├── import_handlers.go       # Import/backup/database handlers
-│       ├── polygon_handlers.go      # Polygon.io integration handlers
+│       ├── provider_handlers.go     # Market data provider integration handlers
 │       ├── settings_handlers.go     # Settings management handlers
 │       ├── utility_handlers.go      # Utility functions and helpers
 │       ├── types.go                 # Web data types and structures

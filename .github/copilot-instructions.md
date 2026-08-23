@@ -141,10 +141,11 @@ funcMap := template.FuncMap{
 
 ### Adding New Domain Entity
 1. Create model struct in `internal/models/{entity}.go` with service pattern
-2. Add table schema to `internal/database/schema.sql`
-3. Implement CRUD methods: `Create`, `GetByID`, `Update`, `Delete`, `GetAll`
-4. Add handler in `internal/web/{entity}_handlers.go` with API endpoints
-5. Create HTML template in `internal/web/templates/{entity}.html`
+2. Update `internal/database/schema.sql` for newly created databases
+3. **Required:** add a new timestamped, embedded migration in `internal/database/migrations/` for existing databases; never modify an existing migration or rely on an ad-hoc `CREATE TABLE IF NOT EXISTS`
+4. Implement CRUD methods: `Create`, `GetByID`, `Update`, `Delete`, `GetAll`
+5. Add handler in `internal/web/{entity}_handlers.go` with API endpoints
+6. Create HTML template in `internal/web/templates/{entity}.html`
 
 ### Adding API Endpoint
 ```go
