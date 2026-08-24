@@ -398,6 +398,13 @@ func (s *Server) deleteOption(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Missing required fields for deletion", http.StatusBadRequest)
 			return
 		}
+		if req.Direction == "" {
+			req.Direction = "Short"
+		}
+		if req.Direction != "Short" && req.Direction != "Long" {
+			http.Error(w, "Direction must be 'Short' or 'Long'", http.StatusBadRequest)
+			return
+		}
 
 		// Parse dates
 		opened, err := time.Parse("2006-01-02", req.Opened)
@@ -418,7 +425,7 @@ func (s *Server) deleteOption(w http.ResponseWriter, r *http.Request) {
 			req.Symbol, req.Type, req.Opened, req.Strike, req.Expiration)
 
 		// Delete the option using compound key
-		err = s.optionService.Delete(req.Symbol, req.Type, opened, req.Strike, expiration, req.Premium, req.Contracts)
+		err = s.optionService.DeleteWithDirection(req.Symbol, req.Type, req.Direction, opened, req.Strike, expiration, req.Premium, req.Contracts)
 		if err != nil {
 			log.Printf("[DELETE OPTION] ERROR: Compound key deletion failed: %v", err)
 			http.Error(w, fmt.Sprintf("Failed to delete option: %v", err), http.StatusInternalServerError)

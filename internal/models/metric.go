@@ -23,19 +23,19 @@ const (
 	// LongCount is the count of open long_positions
 	LongCount MetricType = "long_count"
 
-	// PutExposure is the total value of all open Put options
+	// PutExposure is the collateral exposure of open short Put options.
 	PutExposure MetricType = "put_exposure"
 
-	// OpenPutPremium is the total of all open Put option premiums
+	// OpenPutPremium is the credit collected from open short Put options.
 	OpenPutPremium MetricType = "open_put_premium"
 
-	// OpenPutCount is the count of open Put options
+	// OpenPutCount is the count of open short Put options.
 	OpenPutCount MetricType = "open_put_count"
 
-	//OpenCallPremium is the total of all open Call option premiums
+	// OpenCallPremium is the credit collected from open short Call options.
 	OpenCallPremium MetricType = "open_call_premium"
 
-	// OpenCallCount is the count of open Call options
+	// OpenCallCount is the count of open short Call options.
 	OpenCallCount MetricType = "open_call_count"
 )
 
@@ -392,7 +392,7 @@ func (ms *MetricService) calculatePutExposureForDate(date time.Time) (float64, e
 	return totalExposure, nil
 }
 
-// calculateOpenPutPremiumForDate calculates total premium value of open put options as of a specific date
+// calculateOpenPutPremiumForDate calculates credit collected from active short puts.
 func (ms *MetricService) calculateOpenPutPremiumForDate(date time.Time) (float64, error) {
 	// Query for put options that were active on the given date
 	// Active means: opened <= date AND (closed IS NULL OR closed > date) AND type = 'Put'
@@ -415,7 +415,7 @@ func (ms *MetricService) calculateOpenPutPremiumForDate(date time.Time) (float64
 	return totalPremium, nil
 }
 
-// calculateOpenPutCountForDate calculates total count of open put options as of a specific date
+// calculateOpenPutCountForDate counts active short puts.
 func (ms *MetricService) calculateOpenPutCountForDate(date time.Time) (float64, error) {
 	// Query for put options that were active on the given date
 	// Active means: opened <= date AND (closed IS NULL OR closed > date) AND type = 'Put'
@@ -437,7 +437,7 @@ func (ms *MetricService) calculateOpenPutCountForDate(date time.Time) (float64, 
 	return float64(totalCount), nil
 }
 
-// calculateOpenCallPremiumForDate calculates total premium value of open call options as of a specific date
+// calculateOpenCallPremiumForDate calculates credit collected from active short calls.
 func (ms *MetricService) calculateOpenCallPremiumForDate(date time.Time) (float64, error) {
 	// Query for call options that were active on the given date
 	// Active means: opened <= date AND (closed IS NULL OR closed > date) AND type = 'Call'
@@ -460,7 +460,7 @@ func (ms *MetricService) calculateOpenCallPremiumForDate(date time.Time) (float6
 	return totalPremium, nil
 }
 
-// calculateOpenCallCountForDate calculates total count of open call options as of a specific date
+// calculateOpenCallCountForDate counts active short calls.
 func (ms *MetricService) calculateOpenCallCountForDate(date time.Time) (float64, error) {
 	// Query for call options that were active on the given date
 	// Active means: opened <= date AND (closed IS NULL OR closed > date) AND type = 'Call'

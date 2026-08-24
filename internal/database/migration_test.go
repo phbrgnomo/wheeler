@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"os"
 	"testing"
 )
@@ -136,7 +137,7 @@ func TestMigrationSystem(t *testing.T) {
 	})
 
 	t.Run("option direction defaults to Short and permits opposite legs", func(t *testing.T) {
-		if _, err := db.Exec("INSERT INTO symbols (symbol) VALUES ('NASDAQ:SPREAD')"); err != nil {
+		if _, err := db.ExecContext(context.Background(), "INSERT INTO symbols (symbol) VALUES ('NASDAQ:SPREAD')"); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(`INSERT INTO options (symbol, type, opened, strike, expiration, premium, contracts)

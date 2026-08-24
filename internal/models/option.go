@@ -185,8 +185,18 @@ func (s *OptionService) CloseWithDirection(symbol, optionType, direction string,
 }
 
 func (s *OptionService) Delete(symbol, optionType string, opened time.Time, strike float64, expiration time.Time, premium float64, contracts int) error {
-	query := `DELETE FROM options WHERE symbol = ? AND type = ? AND opened = ? AND strike = ? AND expiration = ? AND premium = ? AND contracts = ?`
-	result, err := s.db.Exec(query, symbol, optionType, opened, strike, expiration, premium, contracts)
+	return s.DeleteWithDirection(symbol, optionType, "Short", opened, strike, expiration, premium, contracts)
+}
+
+func (s *OptionService) DeleteWithDirection(symbol, optionType, direction string, opened time.Time, strike float64, expiration time.Time, premium float64, contracts int) error {
+	var err error
+	direction, err = normalizeOptionDirection(direction)
+	if err != nil {
+		return err
+	}
+
+	query := `DELETE FROM options WHERE symbol = ? AND type = ? AND direction = ? AND opened = ? AND strike = ? AND expiration = ? AND premium = ? AND contracts = ?`
+	result, err := s.db.Exec(query, symbol, optionType, direction, opened, strike, expiration, premium, contracts)
 	if err != nil {
 		return fmt.Errorf("failed to delete option: %w", err)
 	}

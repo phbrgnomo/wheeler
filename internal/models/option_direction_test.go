@@ -66,3 +66,41 @@ func TestOptionDirectionRejectsInvalidValue(t *testing.T) {
 		t.Fatal("expected CloseWithDirection to reject an invalid direction")
 	}
 }
+
+func TestOptionDirectionTreatsUnknownValuesAsNonShort(t *testing.T) {
+	if (&Option{Direction: ""}).IsShort() != true {
+		t.Fatal("legacy empty direction must remain short")
+	}
+	if (&Option{Direction: "Diagonal"}).IsShort() {
+		t.Fatal("unknown direction must not be treated as short")
+	}
+}
+
+func TestDeleteWithDirectionKeepsOppositeSpreadLeg(t *testing.T) {
+	db, err := database.NewDB(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec("INSERT INTO symbols (symbol) VALUES ('NASDAQ:SPREAD')"); err != nil {
+		t.Fatal(err)
+	}
+	service := NewOptionService(db.DB)
+	opened := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	expires := opened.AddDate(0, 1, 0)
+	for _, direction := range []string{"Short", "Long"} {
+		if _, err := service.CreateWithCommissionAndDirection("NASDAQ:SPREAD", "Put", direction, opened, 100, expires, 2, 1, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := service.DeleteWithDirection("NASDAQ:SPREAD", "Put", "Short", opened, 100, expires, 2, 1); err != nil {
+		t.Fatal(err)
+	}
+	options, err := service.GetBySymbol("NASDAQ:SPREAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(options) != 1 || options[0].Direction != "Long" {
+		t.Fatalf("remaining option = %#v", options)
+	}
+}

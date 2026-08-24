@@ -291,11 +291,15 @@
                                         {{end}}
                                     </td>
                                     <td class="numeric-cell">
-                                        {{if and .Closed .HasPerformanceMetrics}}
-                                            {{$percentProfit := .CalculatePercentOfProfit}}
-                                            {{$percentTime := .CalculatePercentOfTime}}
-                                            {{$multiplier := .CalculateMultiplier}}
-                                            <span class="{{if ge $multiplier 2.0}}multiplier-excellent{{else if ge $multiplier 1.5}}multiplier-great{{else if ge $multiplier 1.0}}multiplier-good{{else if ge $multiplier 0.75}}multiplier-fair{{else if ge $multiplier 0.5}}multiplier-poor{{else if ge $multiplier 0.25}}multiplier-losing{{else if ge $multiplier 0.0}}multiplier-verybad{{else}}multiplier-terrible{{end}}">{{printf "%.2f" $percentTime}}%</span>
+                                        {{if .Closed}}
+                                            {{if .HasPerformanceMetrics}}
+                                                {{$percentProfit := .CalculatePercentOfProfit}}
+                                                {{$percentTime := .CalculatePercentOfTime}}
+                                                {{$multiplier := .CalculateMultiplier}}
+                                                <span class="{{if ge $multiplier 2.0}}multiplier-excellent{{else if ge $multiplier 1.5}}multiplier-great{{else if ge $multiplier 1.0}}multiplier-good{{else if ge $multiplier 0.75}}multiplier-fair{{else if ge $multiplier 0.5}}multiplier-poor{{else if ge $multiplier 0.25}}multiplier-losing{{else if ge $multiplier 0.0}}multiplier-verybad{{else}}multiplier-terrible{{end}}">{{printf "%.2f" $percentTime}}%</span>
+                                            {{else}}
+                                                -
+                                            {{end}}
                                         {{else}}
                                             {{$percentTime := .CalculatePercentOfTime}}
                                             <span class="{{if lt $percentTime 0.0}}negative{{else if gt $percentTime 0.0}}positive{{else}}neutral-currency{{end}}">{{printf "%.2f" $percentTime}}%</span>
@@ -348,7 +352,7 @@
                                 {{end}}
                             {{else}}
                                 <tr>
-                                    <td colspan="18" style="text-align: center; color: #a0a0a0; padding: 20px;">
+                                    <td colspan="19" style="text-align: center; color: #a0a0a0; padding: 20px;">
                                         No options trades recorded for {{.Symbol}}
                                     </td>
                                 </tr>

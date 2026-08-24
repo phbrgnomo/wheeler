@@ -373,13 +373,23 @@ func (s *Server) allocationDataHandler(w http.ResponseWriter, r *http.Request) {
 
 	for _, opt := range options {
 		if opt.Closed == nil { // Only open options
-			if opt.Type == "Put" && opt.IsShort() {
+			premium := opt.Premium * float64(opt.Contracts) * 100
+			if opt.IsLong() {
+				premium = -premium
+			}
+			if opt.Type == "Put" {
+				totalPutPremiums += premium
+				if !opt.IsShort() {
+					continue
+				}
 				exposure := opt.Strike * float64(opt.Contracts) * 100
 				totalPuts += exposure
 				putsByTicker[opt.Symbol] += exposure
-				totalPutPremiums += opt.Premium * float64(opt.Contracts) * 100
-			} else if opt.Type == "Call" && opt.IsShort() {
-				totalCallPremiums += opt.Premium * float64(opt.Contracts) * 100
+			} else if opt.Type == "Call" {
+				totalCallPremiums += premium
+				if !opt.IsShort() {
+					continue
+				}
 				callCoverage[opt.Symbol] = true
 			}
 		}

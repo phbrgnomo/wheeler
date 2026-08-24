@@ -148,11 +148,20 @@ func (o *Option) CalculateTotalProfit() float64 {
 	return profit - o.Commission // Subtract commission for accurate net profit
 }
 
-// IsLong reports whether the option was bought. Empty direction is treated as
-// Short for compatibility with options created before direction was introduced.
+// IsLong reports whether the option was bought.
 func (o *Option) IsLong() bool { return o.Direction == "Long" }
 
-func (o *Option) IsShort() bool { return !o.IsLong() }
+// IsShort reports whether the option was sold. Empty direction is treated as
+// Short for compatibility with options created before direction was introduced.
+// Unknown values are deliberately excluded from short-side risk calculations.
+func (o *Option) IsShort() bool {
+	switch o.Direction {
+	case "", "Short":
+		return true
+	default:
+		return false
+	}
+}
 
 // HasPerformanceMetrics reports whether the wheel-oriented percentage metrics
 // are meaningful for this option. Long options intentionally do not expose

@@ -78,6 +78,15 @@ func TestOptionAPIStoresLongDirection(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("get long option = %d: %s", recorder.Code, recorder.Body.String())
 	}
+	var retrieved struct {
+		Direction string `json:"direction"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&retrieved); err != nil {
+		t.Fatal(err)
+	}
+	if retrieved.Direction != "Long" {
+		t.Fatalf("retrieved direction = %q", retrieved.Direction)
+	}
 }
 
 func TestProviderServiceIsRecreatedForNewDatabase(t *testing.T) {
@@ -365,6 +374,30 @@ func TestSymbolTemplateRestoresMarketAfterOptionsLoad(t *testing.T) {
 	}
 	if !strings.Contains(string(contents), "selectedMarket") || !strings.Contains(string(contents), "marketInput.value = selectedMarket") {
 		t.Fatal("symbol template does not restore the selected market after loading options")
+	}
+}
+
+func TestOptionsTemplateChartParsersAccountForPositionColumn(t *testing.T) {
+	contents, err := os.ReadFile("templates/options.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := string(contents)
+	for _, expected := range []string{
+		"data-symbol=\"{{.Symbol}}\"",
+		"data-type=\"{{if eq .Type \"Put\"}}Put{{else}}Call{{end}}\"",
+		"data-direction=\"{{.Direction}}\"",
+		"data-strike=\"{{printf \"%.2f\" .Strike}}\"",
+		"data-contracts=\"{{.Contracts}}\"",
+		"data-total-profit=\"{{printf \"%.2f\" .CalculateTotalProfit}}\"",
+		"row.querySelector('[data-type]')?.dataset.type",
+		"row.querySelector('[data-symbol]')?.dataset.symbol",
+		"type === 'Put' && direction === 'Short'",
+		"row.querySelector('[data-total-profit]')?.dataset.totalProfit",
+	} {
+		if !strings.Contains(template, expected) {
+			t.Errorf("options chart parser is missing %q", expected)
+		}
 	}
 }
 
