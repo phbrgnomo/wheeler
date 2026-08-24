@@ -284,6 +284,7 @@ type OptionRequest struct {
 	ID         *int     `json:"id,omitempty"`
 	Symbol     string   `json:"symbol"`
 	Type       string   `json:"type"`
+	Direction  string   `json:"direction,omitempty"`
 	Strike     float64  `json:"strike"`
 	Expiration string   `json:"expiration"`
 	Premium    float64  `json:"premium"`
