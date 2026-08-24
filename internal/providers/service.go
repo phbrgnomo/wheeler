@@ -27,6 +27,12 @@ const (
 	bulkPriceUpdateLimit = 20
 )
 
+// BulkPriceUpdateLimit is the maximum number of symbols processed by one bulk
+// price request. Callers can use it to explain why a later request is needed.
+func BulkPriceUpdateLimit() int {
+	return bulkPriceUpdateLimit
+}
+
 // ProviderProfile describes the configuration and capabilities of a market
 // data provider. Provider IDs are stored per database in DATA_PROVIDER_TYPE.
 type ProviderProfile struct {
@@ -100,6 +106,7 @@ type DividendFetchRecord struct {
 // BulkDividendFetchResult summarizes dividend history fetches across many symbols
 type BulkDividendFetchResult struct {
 	Processed int
+	Skipped   int
 	Results   []DividendFetchRecord
 	Errors    []string
 }
@@ -330,6 +337,11 @@ func (s *Service) FetchDividendHistoryForSymbols(ctx context.Context, symbols []
 	log.Printf("[PROVIDER] Starting dividend fetch for %d symbols using %s", len(normalized), provider.Name())
 	rateLimitDelay := s.GetRateLimitDelay()
 	result := &BulkDividendFetchResult{Results: []DividendFetchRecord{}}
+	if len(normalized) > bulkPriceUpdateLimit {
+		result.Skipped = len(normalized) - bulkPriceUpdateLimit
+		normalized = normalized[:bulkPriceUpdateLimit]
+		log.Printf("[PROVIDER] Limiting this dividend fetch to %d symbols; %d remaining", len(normalized), result.Skipped)
+	}
 
 	providerCalls := 0
 	for _, symbol := range normalized {

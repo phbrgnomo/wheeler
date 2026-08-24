@@ -31,13 +31,17 @@ func (p *PolygonProvider) GetQuote(ctx context.Context, symbol string) (*Quote, 
 	}
 
 	return &Quote{
-		Symbol:    polygonQuote.Results.Symbol,
-		Price:     polygonQuote.Results.Price,
-		Open:      polygonQuote.Results.Open,
-		High:      polygonQuote.Results.High,
-		Low:       polygonQuote.Results.Low,
-		Volume:    polygonQuote.Results.Volume,
-		Timestamp: time.Unix(0, polygonQuote.Results.Timestamp*int64(time.Millisecond)),
+		Symbol: polygonQuote.Results.Symbol,
+		// Polygon's /prev aggregate exposes the prior session's close as its
+		// only close value. It is therefore both the returned price and the
+		// best available previous-close value without another market-data call.
+		Price:         polygonQuote.Results.Price,
+		PreviousClose: polygonQuote.Results.Price,
+		Open:          polygonQuote.Results.Open,
+		High:          polygonQuote.Results.High,
+		Low:           polygonQuote.Results.Low,
+		Volume:        polygonQuote.Results.Volume,
+		Timestamp:     time.Unix(0, polygonQuote.Results.Timestamp*int64(time.Millisecond)),
 	}, nil
 }
 

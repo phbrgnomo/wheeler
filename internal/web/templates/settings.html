@@ -17,6 +17,19 @@
             <div class="content-section">
                 <div class="section-title">Market Data Provider</div>
                 <div class="section-subtitle">Choose the source Wheeler uses for live market data in this database.</div>
+
+                {{if .LegacySymbols}}
+                <div class="info-card" style="margin: 16px 0; border-left: 4px solid #f59e0b;">
+                    <div class="info-header">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <h4>Market selection required</h4>
+                    </div>
+                    <div class="info-content">
+                        <p>Provider updates require symbols in <code>MARKET:TICKER</code> form. Edit each legacy symbol below and select its market before requesting provider data.</p>
+                        <p>{{range $index, $symbol := .LegacySymbols}}{{if $index}}, {{end}}<code>{{$symbol}}</code>{{end}}</p>
+                    </div>
+                </div>
+                {{end}}
                 
                 <!-- API Key Configuration Form -->
                 <div class="settings-form-container">
@@ -283,6 +296,7 @@
 
     <script>
         let currentApiKey = '{{if .ApiKey}}{{.ApiKey}}{{end}}';
+        let savedProviderType = '{{.ActiveProvider}}';
         const providerTypeInput = document.getElementById('providerTypeInput');
         const apiKeyField = document.getElementById('apiKeyField');
         const noApiKeyField = document.getElementById('noApiKeyField');
@@ -346,7 +360,13 @@
             apiStatus.classList.remove('configured', 'error', 'not-configured');
             statusIndicator.classList.remove('configured', 'error', 'not-configured');
             
-            if (!capabilities.requiresApiKey) {
+            if (providerTypeInput.value !== savedProviderType) {
+                apiStatus.classList.add('not-configured');
+                statusIndicator.classList.add('not-configured');
+                statusText.textContent = 'Unsaved provider selection';
+                statusDescription.textContent = 'Save this provider configuration before testing or updating prices.';
+                apiActions.style.display = 'none';
+            } else if (!capabilities.requiresApiKey) {
                 apiStatus.classList.add('configured');
                 statusIndicator.classList.add('configured');
                 statusText.textContent = 'Ready';
@@ -396,8 +416,9 @@
                 }
                 return response.json();
             })
-            .then(() => {
+            .then(data => {
                 currentApiKey = apiKey;
+                savedProviderType = data.provider;
                 updateProviderUI();
                 showNotification('Provider configuration saved successfully!', 'success');
             })
@@ -447,7 +468,7 @@
         document.getElementById('updatePricesBtn').addEventListener('click', function() {
             const btn = this;
             
-            if (!confirm('This will update prices for all symbols using your data provider API quota. Continue?')) {
+            if (!confirm('This updates at most 20 symbols per request to respect provider rate limits. Run it again to process any remaining symbols. Continue?')) {
                 return;
             }
             
@@ -465,7 +486,11 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    showNotification(`Price update completed! Updated: ${data.updated}, Failed: ${data.failed}`, 'success');
+                    let message = `Price update completed! Updated: ${data.updated}, Failed: ${data.failed}`;
+                    if (data.skipped > 0) {
+                        message += ` ${data.skipped} symbols remain; run Update All again to continue.`;
+                    }
+                    showNotification(message, 'success');
                 } else {
                     showNotification('Price update failed: ' + (data.message || 'Unknown error'), 'error');
                 }

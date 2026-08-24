@@ -191,7 +191,9 @@ class SymbolModal {
             if (response.ok) {
                 return response.json();
             }
-            throw new Error('Failed to save symbol');
+            return response.text().then(text => {
+                throw new Error(text.trim() || 'Failed to save symbol');
+            });
         })
         .then(data => {
             console.log('Symbol saved successfully:', data);
@@ -201,11 +203,12 @@ class SymbolModal {
         })
         .catch(error => {
             console.error('Error saving symbol:', error);
+            const message = error.message || 'Failed to save symbol. Please try again.';
             // Show error modal if available, otherwise alert
             if (window.showErrorModal) {
-                window.showErrorModal('Failed to save symbol. Please try again.');
+                window.showErrorModal(message);
             } else {
-                alert('Failed to save symbol. Please try again.');
+                alert(message);
             }
         });
     }

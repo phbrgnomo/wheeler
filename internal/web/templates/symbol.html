@@ -748,6 +748,7 @@
         const modalTitle = document.getElementById('modalTitle');
         const marketInput = document.getElementById('marketInput');
         let editingLegacySymbol = null;
+		let selectedMarket = '';
 
         fetch('/api/markets').then(response => response.json()).then(markets => {
             marketInput.innerHTML = '<option value="">Select a market</option>';
@@ -757,6 +758,9 @@
                 option.textContent = market.display_name;
                 marketInput.appendChild(option);
             });
+			if (selectedMarket) {
+				marketInput.value = selectedMarket;
+			}
         });
         
         // Open modal for editing current symbol
@@ -808,7 +812,8 @@
                 const parts = symbolData.symbol.split(':');
                 const isCanonical = parts.length === 2;
                 document.getElementById('symbolInput').value = isCanonical ? parts[1] : symbolData.symbol;
-                marketInput.value = isCanonical ? parts[0] : '';
+				selectedMarket = isCanonical ? parts[0] : '';
+                marketInput.value = selectedMarket;
                 document.getElementById('priceInput').value = symbolData.price || '';
                 document.getElementById('dividendInput').value = symbolData.dividend || '';
                 document.getElementById('exDividendDateInput').value = symbolData.exDividendDate || '';
@@ -823,6 +828,7 @@
                 symbolForm.reset();
                 document.getElementById('symbolInput').disabled = false;
 				marketInput.disabled = false;
+				selectedMarket = '';
 				editingLegacySymbol = null;
             }
             

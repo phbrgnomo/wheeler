@@ -511,13 +511,19 @@ func (s *Server) symbolUpdatePriceHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	instrument, err := markets.Parse(symbol)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	symbol = instrument.Key()
 	log.Printf("[SYMBOL API] Updating price for symbol: %s", symbol)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// Update symbol price using configured market data provider
-	err := s.providerService.UpdateSymbolPrice(ctx, symbol)
+	err = s.providerService.UpdateSymbolPrice(ctx, symbol)
 
 	response := map[string]interface{}{
 		"success": err == nil,
@@ -545,6 +551,12 @@ func (s *Server) symbolFetchDividendsHandler(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	instrument, err := markets.Parse(symbol)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	symbol = instrument.Key()
 	if !s.providerService.ActiveProfile().SupportsDividends {
 		http.Error(w, "The configured provider does not support dividend history", http.StatusConflict)
 		return

@@ -49,6 +49,12 @@ func TestBulkPriceUpdateLimitFitsPolygonRequestBudget(t *testing.T) {
 	}
 }
 
+func TestBulkPriceUpdateLimitIsExposed(t *testing.T) {
+	if got := BulkPriceUpdateLimit(); got != bulkPriceUpdateLimit {
+		t.Fatalf("BulkPriceUpdateLimit() = %d, want %d", got, bulkPriceUpdateLimit)
+	}
+}
+
 func TestConvertDividendsToInfoSkipsNilEntries(t *testing.T) {
 	dividends := convertDividendsToInfo([]*Dividend{nil, {Symbol: "AAPL", CashAmount: 0.25}})
 	if len(dividends) != 1 || dividends[0].Symbol != "AAPL" {

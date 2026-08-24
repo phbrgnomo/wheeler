@@ -71,10 +71,12 @@ Services use **ID-based CRUD** operations (`GetByID`, `Update`, `Delete`) for we
 - Application code depends on this abstraction rather than any specific vendor
 - New providers should implement this interface and be registered via the provider layer
 
-### Polygon Provider (`internal/polygon/`)
-- Default implementation of the market data provider interface using the Polygon.io REST API
+### Polygon Provider (`internal/providers/`)
+- `polygon.go`: Polygon implementation of the market data provider interface
+- `service.go`: Provider selection and provider-independent market-data workflows
+
+### Polygon Client (`internal/polygon/`)
 - `client.go`: HTTP client wrapper around Polygon.io endpoints
-- `service.go`: Business logic layer for fetching quotes, aggregates, and ticker details via the provider interface
 
 ### Web Layer (`internal/web/`)
 **Handler Organization**:

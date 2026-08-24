@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"stonks/internal/database"
 	"stonks/internal/providers"
@@ -97,6 +98,25 @@ func TestProviderUpdateRejectsMalformedJSON(t *testing.T) {
 	}
 }
 
+func TestProviderUpdateResponseExposesBulkLimit(t *testing.T) {
+	server, _ := newProviderTestServer(t, "provider-update-limit")
+	request := httptest.NewRequest(http.MethodPost, "/api/provider/update-prices", strings.NewReader(`{"all":true}`))
+	recorder := httptest.NewRecorder()
+	server.providerUpdatePricesHandler(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("provider update = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Limit int `json:"limit"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Limit != providers.BulkPriceUpdateLimit() {
+		t.Fatalf("response limit = %d, want %d", response.Limit, providers.BulkPriceUpdateLimit())
+	}
+}
+
 func TestProviderSymbolValidation(t *testing.T) {
 	valid, err := validateSymbols([]string{" nasdaq:aapl ", "nasdaq:msft", "NYSE:BRK.B"})
 	if err != nil {
@@ -169,12 +189,14 @@ func TestProviderValidationCache(t *testing.T) {
 func TestProviderValidationCacheCoalescesConcurrentRequests(t *testing.T) {
 	server := &Server{}
 	started := make(chan struct{})
+	waiting := make(chan struct{})
 	release := make(chan struct{})
 	results := make(chan struct {
 		valid bool
 		err   string
 	}, 2)
 	checks := 0
+	server.providerValidationWaitHook = func() { close(waiting) }
 	validate := func() error {
 		checks++
 		close(started)
@@ -198,6 +220,9 @@ func TestProviderValidationCacheCoalescesConcurrentRequests(t *testing.T) {
 		}{valid, errText}
 	}()
 
+	// Do not release the first validation until the second request has entered
+	// the in-flight wait path. This proves coalescing rather than a cache hit.
+	<-waiting
 	close(release)
 	for range 2 {
 		result := <-results
@@ -210,12 +235,42 @@ func TestProviderValidationCacheCoalescesConcurrentRequests(t *testing.T) {
 	}
 }
 
+func TestDatabaseSwitchDoesNotWaitForLeasedProviderServices(t *testing.T) {
+	server, first := newProviderTestServer(t, "leased-first")
+	_, release := server.acquireProviderServices()
+
+	second, err := database.NewDB(filepath.Join(t.TempDir(), "leased-second.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = second.Close() })
+
+	done := make(chan error, 1)
+	go func() { done <- server.switchServices(second.DB) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("database switch waited for the leased provider request")
+	}
+	if err := first.DB.Ping(); err != nil {
+		t.Fatalf("leased database was closed during provider request: %v", err)
+	}
+
+	release()
+	if err := first.DB.Ping(); err == nil {
+		t.Fatal("retired database remained open after provider request completed")
+	}
+}
+
 func TestProviderConfigurationTemplateContainsAllProviderControls(t *testing.T) {
 	contents, err := os.ReadFile("templates/settings.html")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, value := range []string{"providerTypeInput", "apiKeyField", "noApiKeyField", "Dividend history:"} {
+	for _, value := range []string{"providerTypeInput", "apiKeyField", "noApiKeyField", "Dividend history:", "Market selection required", "LegacySymbols", "savedProviderType", "Unsaved provider selection"} {
 		if !strings.Contains(string(contents), value) {
 			t.Errorf("settings template is missing %q", value)
 		}
@@ -242,8 +297,42 @@ func TestSymbolModalQualifiesLegacySymbols(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(contents), "this.editingSymbol.includes(':')") || !strings.Contains(string(contents), "/qualify") {
+	if !strings.Contains(string(contents), "this.editingSymbol.includes(':')") || !strings.Contains(string(contents), "/qualify") || !strings.Contains(string(contents), "response.text()") {
 		t.Fatal("symbol modal does not route legacy edits through the qualification endpoint")
+	}
+}
+
+func TestSymbolProviderOperationsNormalizePathSymbols(t *testing.T) {
+	server, _ := newProviderTestServer(t, "symbol-provider-normalization")
+	for name, handler := range map[string]func(http.ResponseWriter, *http.Request, string){
+		"update price":    server.symbolUpdatePriceHandler,
+		"fetch dividends": server.symbolFetchDividendsHandler,
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/symbols/nasdaq:aapl", nil)
+			recorder := httptest.NewRecorder()
+			handler(recorder, request, "nasdaq:aapl")
+
+			var response struct {
+				Symbol string `json:"symbol"`
+			}
+			if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Symbol != "NASDAQ:AAPL" {
+				t.Fatalf("symbol = %q, want NASDAQ:AAPL", response.Symbol)
+			}
+		})
+	}
+}
+
+func TestSymbolTemplateRestoresMarketAfterOptionsLoad(t *testing.T) {
+	contents, err := os.ReadFile("templates/symbol.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(contents), "selectedMarket") || !strings.Contains(string(contents), "marketInput.value = selectedMarket") {
+		t.Fatal("symbol template does not restore the selected market after loading options")
 	}
 }
 

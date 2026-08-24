@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"fmt"
 	"html/template"
@@ -31,10 +32,13 @@ type Server struct {
 	settingService               *models.SettingService
 	metricService                *models.MetricService
 	providerService              *providers.Service
+	serviceLeases                map[*sql.DB]int
+	retiredDatabases             map[*sql.DB]struct{}
 	providerValidation           map[string]providerValidationCacheEntry
 	providerValidationInFlight   map[string]*providerValidationCall
 	providerValidationGeneration uint64
 	providerValidationMu         sync.Mutex
+	providerValidationWaitHook   func()
 	templates                    *template.Template
 }
 
@@ -50,6 +54,13 @@ type providerValidationCall struct {
 	done       chan struct{}
 	generation uint64
 }
+
+type providerServicesSnapshot struct {
+	providerService *providers.Service
+	symbolService   *models.SymbolService
+}
+
+type providerServicesContextKey struct{}
 
 func NewServer() (*Server, error) {
 	log.Printf("[SERVER] Initializing Wheeler web server")
@@ -303,13 +314,22 @@ func (s *Server) cachedProviderValidation(provider string, validate func() error
 	for {
 		s.providerValidationMu.Lock()
 		generation := s.providerValidationGeneration
+		// A fresh entry is safe to return immediately. Cache invalidation bumps
+		// the generation, so entries from an earlier provider configuration are
+		// never reused after a settings or database change.
 		if entry, ok := s.providerValidation[provider]; ok && time.Since(entry.checkedAt) < providerValidationCacheTTL {
 			s.providerValidationMu.Unlock()
 			return entry.valid, entry.err
 		}
+		// One caller validates outside the mutex. Other callers wait for that
+		// result instead of serializing multiple provider HTTP requests.
 		if call, ok := s.providerValidationInFlight[provider]; ok && call.generation == generation {
 			done := call.done
+			waitHook := s.providerValidationWaitHook
 			s.providerValidationMu.Unlock()
+			if waitHook != nil {
+				waitHook()
+			}
 			<-done
 			continue
 		}
@@ -320,6 +340,8 @@ func (s *Server) cachedProviderValidation(provider string, validate func() error
 		s.providerValidationInFlight[provider] = call
 		s.providerValidationMu.Unlock()
 
+		// This request owns the validation for this provider and generation.
+		// Never hold providerValidationMu across the potentially slow HTTP call.
 		entry := providerValidationCacheEntry{checkedAt: time.Now()}
 		if err := validate(); err != nil {
 			entry.err = err.Error()
@@ -343,9 +365,14 @@ func (s *Server) cachedProviderValidation(provider string, validate func() error
 		if isCurrentGeneration {
 			return entry.valid, entry.err
 		}
+		// Configuration changed while validation was in progress. Repeat using
+		// the current generation rather than returning a stale result.
 	}
 }
 
+// invalidateProviderValidation makes cached and in-flight validations from a
+// previous configuration obsolete. In-flight callers wake their waiters, which
+// retry against this newer generation.
 func (s *Server) invalidateProviderValidation() {
 	s.providerValidationMu.Lock()
 	defer s.providerValidationMu.Unlock()
@@ -372,9 +399,53 @@ func (s *Server) handleServiceFunc(pattern string, handler http.HandlerFunc) {
 	})
 }
 
-// switchServices atomically replaces the service set after all in-flight
-// service handlers complete, then closes the old database before new handlers
-// can observe it.
+// handleProviderServiceFunc leases the current provider services for long bulk
+// requests. The lease keeps their database open after a switch, but does not
+// hold servicesMu while network and rate-limit waits are in progress.
+func (s *Server) handleProviderServiceFunc(pattern string, handler http.HandlerFunc) {
+	http.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		snapshot, release := s.acquireProviderServices()
+		defer release()
+		ctx := context.WithValue(r.Context(), providerServicesContextKey{}, snapshot)
+		handler(w, r.WithContext(ctx))
+	})
+}
+
+func (s *Server) acquireProviderServices() (providerServicesSnapshot, func()) {
+	s.servicesMu.Lock()
+	db := s.db
+	if s.serviceLeases == nil {
+		s.serviceLeases = make(map[*sql.DB]int)
+	}
+	s.serviceLeases[db]++
+	snapshot := providerServicesSnapshot{providerService: s.providerService, symbolService: s.symbolService}
+	s.servicesMu.Unlock()
+
+	return snapshot, func() {
+		s.servicesMu.Lock()
+		defer s.servicesMu.Unlock()
+		s.serviceLeases[db]--
+		if s.serviceLeases[db] != 0 {
+			return
+		}
+		delete(s.serviceLeases, db)
+		if _, retired := s.retiredDatabases[db]; retired {
+			delete(s.retiredDatabases, db)
+			if err := db.Close(); err != nil {
+				log.Printf("[SERVER] Error closing retired database: %v", err)
+			}
+		}
+	}
+}
+
+func providerServicesFromContext(ctx context.Context) (providerServicesSnapshot, bool) {
+	snapshot, ok := ctx.Value(providerServicesContextKey{}).(providerServicesSnapshot)
+	return snapshot, ok
+}
+
+// switchServices atomically replaces the service set. A database leased by a
+// long provider request is closed by that request's release function instead
+// of delaying the switch or invalidating the in-flight request.
 func (s *Server) switchServices(db *sql.DB) error {
 	s.servicesMu.Lock()
 	defer s.servicesMu.Unlock()
@@ -383,6 +454,13 @@ func (s *Server) switchServices(db *sql.DB) error {
 	s.initializeServicesLocked(db)
 	s.invalidateProviderValidation()
 	if oldDB != nil && oldDB != db {
+		if s.serviceLeases[oldDB] > 0 {
+			if s.retiredDatabases == nil {
+				s.retiredDatabases = make(map[*sql.DB]struct{})
+			}
+			s.retiredDatabases[oldDB] = struct{}{}
+			return nil
+		}
 		return oldDB.Close()
 	}
 	return nil
@@ -545,7 +623,7 @@ func (s *Server) setupRoutes() {
 	s.handleServiceFunc("/api/provider/test", s.providerTestHandler)
 	log.Printf("[SERVER] Route registered: /api/provider/test -> providerTestHandler")
 
-	s.handleServiceFunc("/api/provider/update-prices", s.providerUpdatePricesHandler)
+	s.handleProviderServiceFunc("/api/provider/update-prices", s.providerUpdatePricesHandler)
 	log.Printf("[SERVER] Route registered: /api/provider/update-prices -> providerUpdatePricesHandler")
 
 	s.handleServiceFunc("/api/provider/symbol-info/", s.providerSymbolInfoHandler)
@@ -554,7 +632,7 @@ func (s *Server) setupRoutes() {
 	s.handleServiceFunc("/api/provider/status", s.providerStatusHandler)
 	log.Printf("[SERVER] Route registered: /api/provider/status -> providerStatusHandler")
 
-	s.handleServiceFunc("/api/provider/fetch-dividends", s.providerFetchDividendsHandler)
+	s.handleProviderServiceFunc("/api/provider/fetch-dividends", s.providerFetchDividendsHandler)
 	log.Printf("[SERVER] Route registered: /api/provider/fetch-dividends -> providerFetchDividendsHandler")
 
 	log.Printf("[SERVER] All routes registered successfully")

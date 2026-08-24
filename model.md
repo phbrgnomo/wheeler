@@ -183,7 +183,7 @@ Represents application configuration settings stored as name-value pairs for dyn
 **Common Settings:**
 - **POLYGON_API_KEY**: API key for Polygon.io stock market data integration
 - **DATA_PROVIDER_TYPE**: Active provider: `polygon`, `google_finance`, or `yfinance` (legacy aliases are normalized)
-- **GOOGLE_FINANCE_EXCHANGE**: Default exchange used for Google Finance symbols, such as `NASDAQ`
+- **GOOGLE_FINANCE_EXCHANGE**: Legacy fallback exchange used when qualifying historical bare tickers; not used for new canonical symbols
 - **AUTO_UPDATE_INTERVAL**: Minutes between automatic price updates
 - **DEFAULT_CURRENCY**: Base currency for portfolio calculations
 - **ENABLE_NOTIFICATIONS**: Enable/disable system notifications

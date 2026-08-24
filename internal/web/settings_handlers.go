@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"stonks/internal/markets"
 	"stonks/internal/models"
 	"stonks/internal/providers"
 	"strings"
@@ -15,6 +16,7 @@ import (
 type SettingsData struct {
 	Settings         []*models.Setting           `json:"settings"`
 	AllSymbols       []string                    `json:"allSymbols"`
+	LegacySymbols    []string                    `json:"legacySymbols"`
 	CurrentDB        string                      `json:"currentDB"`
 	ApiKey           string                      `json:"apiKey"`
 	ActiveProvider   string                      `json:"activeProvider"`
@@ -32,6 +34,12 @@ func (s *Server) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Printf("[SETTINGS] Error getting symbols: %v", err)
 		symbols = []string{}
+	}
+	legacySymbols := make([]string, 0)
+	for _, symbol := range symbols {
+		if markets.IsLegacyKey(symbol) {
+			legacySymbols = append(legacySymbols, symbol)
+		}
 	}
 
 	// Get all settings
@@ -51,6 +59,7 @@ func (s *Server) settingsHandler(w http.ResponseWriter, r *http.Request) {
 	data := SettingsData{
 		Settings:         settings,
 		AllSymbols:       symbols,
+		LegacySymbols:    legacySymbols,
 		CurrentDB:        s.getCurrentDatabaseName(),
 		ApiKey:           apiKey,
 		ActiveProvider:   s.providerService.Name(),
@@ -189,11 +198,17 @@ func (s *Server) providerConfigurationAPIHandler(w http.ResponseWriter, r *http.
 		return
 	}
 	profile := providers.ProviderProfile{}
+	foundProfile := false
 	for _, candidate := range providers.ProviderProfiles() {
 		if candidate.ID == providerType {
 			profile = candidate
+			foundProfile = true
 			break
 		}
+	}
+	if !foundProfile {
+		http.Error(w, fmt.Sprintf("unsupported data provider type: %s", providerType), http.StatusBadRequest)
+		return
 	}
 
 	apiKey := strings.TrimSpace(req.PolygonAPIKey)
@@ -216,6 +231,7 @@ func (s *Server) providerConfigurationAPIHandler(w http.ResponseWriter, r *http.
 	}
 	if profile.RequiresAPIKey {
 		if err := upsert("POLYGON_API_KEY", apiKey, "API key for Polygon.io stock market data integration"); err != nil {
+			log.Printf("[SETTINGS API] Error saving Polygon API key: %v", err)
 			http.Error(w, "Failed to save provider configuration", http.StatusInternalServerError)
 			return
 		}
@@ -223,6 +239,7 @@ func (s *Server) providerConfigurationAPIHandler(w http.ResponseWriter, r *http.
 	// Write the active provider last. The transaction makes every change
 	// visible together only after all dependent configuration has succeeded.
 	if err := upsert("DATA_PROVIDER_TYPE", providerType, "Active market data provider"); err != nil {
+		log.Printf("[SETTINGS API] Error saving provider type: %v", err)
 		http.Error(w, "Failed to save provider configuration", http.StatusInternalServerError)
 		return
 	}

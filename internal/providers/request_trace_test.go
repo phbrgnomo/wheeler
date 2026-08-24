@@ -170,7 +170,7 @@ func TestProviderRequestTraces(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertAndLogTrace(t, "polygon", "quote", transport.calls[0], "http://polygon.test/v2/aggs/ticker/AAPL/prev?adjusted=true&apikey=REDACTED", "price:189.42")
-		if quote.Price != 189.42 {
+		if quote.Price != 189.42 || quote.PreviousClose != 189.42 {
 			t.Fatalf("unexpected quote: %+v", quote)
 		}
 

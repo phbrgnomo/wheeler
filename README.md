@@ -183,7 +183,7 @@ Wheeler provides comprehensive RESTful APIs:
 - `PUT /api/provider/configuration` - Atomically select and configure Polygon, Google Finance, or Yahoo Finance
 - `GET /api/provider/status`, `POST /api/provider/test` - Provider configuration and connectivity status
 - `POST /api/provider/update-prices` - Refresh prices (`{"all":true}` or `{"symbols":["NASDAQ:AAPL"]}`; requests process at most 20 symbols)
-- `GET /api/provider/symbol-info/{symbol}` - Fetch provider details; Google accepts `EXCHANGE:TICKER`, such as `NASDAQ:AAPL`
+- `GET /api/provider/symbol-info/{symbol}` - Fetch provider details using the canonical `MARKET:TICKER` key, such as `NASDAQ:AAPL`; the provider layer performs provider-specific conversion
 - `POST /api/provider/fetch-dividends` - Fetch dividend histories when supported by the selected provider
 
 ## Project Structure

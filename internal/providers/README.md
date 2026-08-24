@@ -117,17 +117,11 @@ Add settings for the new provider:
 
 ### 4. Write Tests
 
-Create unit tests for the new provider:
-
-```go
-func TestAlphaVantageProvider(t *testing.T) {
-    provider := NewAlphaVantageProvider("test-key")
-    
-    ctx := context.Background()
-    quote, err := provider.GetQuote(ctx, "AAPL")
-    // Test assertions...
-}
-```
+Provider unit tests must inject an HTTP client or use an `httptest.Server`.
+They must not call a provider's production endpoint, require credentials, or
+consume an API quota. See `request_trace_test.go` for offline quote, details,
+dividend, and validation examples. Keep any intentional live checks separate
+and explicitly opt-in.
 
 ### 5. Update Documentation
 

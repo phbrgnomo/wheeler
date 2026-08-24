@@ -337,7 +337,7 @@ func createLargeTestData(t *testing.T, db *database.DB) {
 
 	for month := 0; month < 24; month++ { // 24 months of data
 		for i := 0; i < 10; i++ { // 10 options per month
-			symbol := fmt.Sprintf("SYMBOL%03d", (i%50)+1)
+			symbol := fmt.Sprintf("NASDAQ:SYMBOL%03d", (i%50)+1)
 			monthDate := baseDate.AddDate(0, month, 0)
 			openDate := monthDate.AddDate(0, 0, -30)
 			_ = monthDate.AddDate(0, 0, -5) // closeDate
