@@ -20,18 +20,28 @@ import (
 // so this provider is intentionally limited to the public quote page and may
 // require maintenance if Google's HTML changes.
 type GoogleFinanceProvider struct {
-	exchange   string
 	baseURL    string
 	httpClient *http.Client
 }
 
 var errGoogleFinanceDividendsUnsupported = errors.New("google finance does not provide dividend history through the public quote page")
 
-// NewGoogleFinanceProvider creates a provider using the supplied exchange,
-// for example "NASDAQ" or "NYSE". Symbols may also include EXCHANGE:TICKER.
-func NewGoogleFinanceProvider(exchange string) *GoogleFinanceProvider {
+var (
+	googleFinancePricePatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?is)<meta[^>]+itemprop=["']price["'][^>]+content=["']([0-9,.]+)["']`),
+		regexp.MustCompile(`(?is)<[^>]+data-last-price=["']([0-9,.]+)["']`),
+		regexp.MustCompile(`(?is)<[^>]+class=["'][^"']*YMlKec[^"']*["'][^>]*>\s*\$?\s*([0-9,.]+)`),
+	}
+	googleFinanceTitlePattern    = regexp.MustCompile(`(?is)<title[^>]*>\s*(.*?)\s*</title>`)
+	googleFinanceWhitespace      = regexp.MustCompile(`\s+`)
+	googleFinanceCurrencyPattern = regexp.MustCompile(`(?i)(?:·|&middot;)\s*([A-Z]{3})`)
+)
+
+// NewGoogleFinanceProvider creates a provider. The parameter is retained for
+// source compatibility with legacy callers; market selection now comes from
+// each canonical MARKET:TICKER symbol.
+func NewGoogleFinanceProvider(_ string) *GoogleFinanceProvider {
 	return &GoogleFinanceProvider{
-		exchange:   strings.ToUpper(strings.TrimSpace(exchange)),
 		baseURL:    "https://www.google.com",
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
@@ -79,7 +89,7 @@ func (p *GoogleFinanceProvider) GetTickerDetails(ctx context.Context, symbol str
 	return &TickerDetails{
 		Symbol:   ticker,
 		Name:     name,
-		Market:   p.exchange,
+		Market:   googleFinanceMarket(symbol),
 		Type:     "CS",
 		Active:   true,
 		Currency: extractGoogleFinanceCurrency(page),
@@ -119,14 +129,14 @@ func (p *GoogleFinanceProvider) ValidateConnection(ctx context.Context) error {
 func (p *GoogleFinanceProvider) Name() string { return "Google Finance" }
 
 func (p *GoogleFinanceProvider) fetchPage(ctx context.Context, symbol string) (string, error) {
-	ticker := normalizeGoogleFinanceSymbol(symbol)
-	exchange := p.exchange
-	if parts := strings.SplitN(strings.TrimSpace(symbol), ":", 2); len(parts) == 2 {
-		exchange = strings.ToUpper(strings.TrimSpace(parts[0]))
-		ticker = strings.ToUpper(strings.TrimSpace(parts[1]))
+	parts := strings.SplitN(strings.TrimSpace(symbol), ":", 2)
+	if len(parts) != 2 {
+		return "", fmt.Errorf("symbol must use TICKER:MARKET (for example AAPL:NASDAQ)")
 	}
+	ticker := strings.ToUpper(strings.TrimSpace(parts[0]))
+	exchange := strings.ToUpper(strings.TrimSpace(parts[1]))
 	if ticker == "" || exchange == "" {
-		return "", fmt.Errorf("symbol must include a ticker and exchange (for example AAPL or NASDAQ:AAPL)")
+		return "", fmt.Errorf("symbol must use TICKER:MARKET (for example AAPL:NASDAQ)")
 	}
 
 	path := "/finance/quote/" + url.PathEscape(ticker+":"+exchange)
@@ -142,6 +152,9 @@ func (p *GoogleFinanceProvider) fetchPage(ctx context.Context, symbol string) (s
 		return "", fmt.Errorf("execute request: %w", err)
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return "", fmt.Errorf("unknown symbol %q", symbol)
+	}
 	if response.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("quote page returned HTTP %d", response.StatusCode)
 	}
@@ -154,13 +167,8 @@ func (p *GoogleFinanceProvider) fetchPage(ctx context.Context, symbol string) (s
 }
 
 func extractGoogleFinancePrice(page string) (float64, error) {
-	patterns := []string{
-		`(?is)<meta[^>]+itemprop=["']price["'][^>]+content=["']([0-9,.]+)["']`,
-		`(?is)<[^>]+data-last-price=["']([0-9,.]+)["']`,
-		`(?is)<[^>]+class=["'][^"']*YMlKec[^"']*["'][^>]*>\s*\$?\s*([0-9,.]+)`,
-	}
-	for _, pattern := range patterns {
-		match := regexp.MustCompile(pattern).FindStringSubmatch(page)
+	for _, pattern := range googleFinancePricePatterns {
+		match := pattern.FindStringSubmatch(page)
 		if len(match) < 2 {
 			continue
 		}
@@ -173,11 +181,11 @@ func extractGoogleFinancePrice(page string) (float64, error) {
 }
 
 func extractGoogleFinanceTitle(page string) string {
-	match := regexp.MustCompile(`(?is)<title[^>]*>\s*(.*?)\s*</title>`).FindStringSubmatch(page)
+	match := googleFinanceTitlePattern.FindStringSubmatch(page)
 	if len(match) < 2 {
 		return ""
 	}
-	title := strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(match[1], " "))
+	title := strings.TrimSpace(googleFinanceWhitespace.ReplaceAllString(match[1], " "))
 	if index := strings.Index(title, " ("); index > 0 {
 		return title[:index]
 	}
@@ -185,7 +193,7 @@ func extractGoogleFinanceTitle(page string) string {
 }
 
 func extractGoogleFinanceCurrency(page string) string {
-	match := regexp.MustCompile(`(?i)(?:·|&middot;)\s*([A-Z]{3})`).FindStringSubmatch(page)
+	match := googleFinanceCurrencyPattern.FindStringSubmatch(page)
 	if len(match) >= 2 {
 		return match[1]
 	}
@@ -195,7 +203,15 @@ func extractGoogleFinanceCurrency(page string) string {
 func normalizeGoogleFinanceSymbol(symbol string) string {
 	parts := strings.SplitN(strings.TrimSpace(symbol), ":", 2)
 	if len(parts) == 2 {
-		return strings.ToUpper(strings.TrimSpace(parts[1]))
+		return strings.ToUpper(strings.TrimSpace(parts[0]))
 	}
 	return strings.ToUpper(strings.TrimSpace(symbol))
+}
+
+func googleFinanceMarket(symbol string) string {
+	parts := strings.SplitN(strings.TrimSpace(symbol), ":", 2)
+	if len(parts) == 2 {
+		return strings.ToUpper(strings.TrimSpace(parts[1]))
+	}
+	return ""
 }

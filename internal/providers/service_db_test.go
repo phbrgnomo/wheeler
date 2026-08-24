@@ -125,6 +125,23 @@ func TestGetAPIKeyStatus_UnsupportedProvider(t *testing.T) {
 	}
 }
 
+func TestGetAPIKeyStatus_KeylessProvidersAreReadyWithoutAKey(t *testing.T) {
+	for _, providerType := range []string{providerTypeGoogle, providerTypeYFinance} {
+		t.Run(providerType, func(t *testing.T) {
+			db := setupProvidersTestDB(t)
+			settings := models.NewSettingService(db.DB)
+			if err := settings.SetValue("DATA_PROVIDER_TYPE", providerType, ""); err != nil {
+				t.Fatal(err)
+			}
+			service := NewService(models.NewSymbolService(db.DB), settings)
+			status := service.GetAPIKeyStatus()
+			if status.Configured || !status.Ready || status.RequiresAPIKey || status.Masked != "Not required" {
+				t.Fatalf("unexpected keyless status: %+v", status)
+			}
+		})
+	}
+}
+
 // TestUpdateSymbolPrice_MissingAPIKey tests error when API key is missing
 func TestUpdateSymbolPrice_MissingAPIKey(t *testing.T) {
 	ctx := context.Background()
@@ -139,7 +156,7 @@ func TestUpdateSymbolPrice_MissingAPIKey(t *testing.T) {
 	symbolService := models.NewSymbolService(db.DB)
 	service := NewService(symbolService, settingService)
 
-	err := service.UpdateSymbolPrice(ctx, "AAPL")
+	err := service.UpdateSymbolPrice(ctx, "NASDAQ:AAPL")
 	if err == nil {
 		t.Fatal("Expected error when API key is missing, got nil")
 	}
@@ -165,12 +182,12 @@ func TestUpdateSymbolPrice_UnsupportedProvider(t *testing.T) {
 	symbolService := models.NewSymbolService(db.DB)
 	service := NewService(symbolService, settingService)
 
-	err := service.UpdateSymbolPrice(ctx, "AAPL")
+	err := service.UpdateSymbolPrice(ctx, "NASDAQ:AAPL")
 	if err == nil {
 		t.Fatal("Expected error when provider is unsupported, got nil")
 	}
 
-	if !strings.Contains(err.Error(), "failed to get provider") {
+	if !strings.Contains(err.Error(), "unsupported data provider type") {
 		t.Errorf("Expected error about provider, got: %v", err)
 	}
 }
@@ -189,11 +206,11 @@ func TestUpdateAllSymbolPrices_MissingAPIKey(t *testing.T) {
 	symbolService := models.NewSymbolService(db.DB)
 
 	// Create test symbols
-	_, err := symbolService.Create("AAPL")
+	_, err := symbolService.Create("NASDAQ:AAPL")
 	if err != nil {
 		t.Fatalf("failed to create symbol AAPL: %v", err)
 	}
-	_, err = symbolService.Create("GOOGL")
+	_, err = symbolService.Create("NASDAQ:GOOGL")
 	if err != nil {
 		t.Fatalf("failed to create symbol GOOGL: %v", err)
 	}
@@ -220,7 +237,7 @@ func TestFetchSymbolDetails_MissingAPIKey(t *testing.T) {
 	symbolService := models.NewSymbolService(db.DB)
 	service := NewService(symbolService, settingService)
 
-	_, err := service.FetchSymbolDetails(ctx, "AAPL")
+	_, err := service.FetchSymbolDetails(ctx, "NASDAQ:AAPL")
 	if err == nil {
 		t.Fatal("Expected error without API key, got nil")
 	}
@@ -244,7 +261,7 @@ func TestFetchDividendHistory_MissingAPIKey(t *testing.T) {
 	symbolService := models.NewSymbolService(db.DB)
 	service := NewService(symbolService, settingService)
 
-	_, err := service.FetchDividendHistory(ctx, "AAPL", 10)
+	_, err := service.FetchDividendHistory(ctx, "NASDAQ:AAPL", 10)
 	if err == nil {
 		t.Fatal("Expected error without API key, got nil")
 	}

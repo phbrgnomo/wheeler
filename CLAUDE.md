@@ -28,8 +28,8 @@ make test                         # Run all tests (requires CGO for SQLite)
 
 ### Testing
 - Unit tests alongside code files (`*_test.go`)
-- Integration tests in `test/` folder with consistent naming pattern
-- Integration tests require live Polygon.io API key: `internal/polygon/live_integration_test.go`
+- Provider unit tests live in `internal/providers/{provider_name}_test.go`
+- Live Polygon integration tests require an API key: `internal/polygon/live_integration_test.go`
 - Test databases automatically cleaned: `rm -f test_*.db`
 
 ## Dependencies
@@ -58,11 +58,11 @@ Services use **ID-based CRUD** operations (`GetByID`, `Update`, `Delete`) for we
 ### Database Design (`internal/database/`)
 **Hybrid Primary Key Strategy**:
 - **Transactional tables** use `INTEGER PRIMARY KEY AUTOINCREMENT` for easier HTTP operations: `options.id`, `long_positions.id`, `dividends.id`
-- **Reference tables** use natural keys: `symbols.symbol`, `treasuries.cuspid`, `settings.name`
+- **Reference tables** use natural keys: `symbols.symbol`, Treasury CUSIP (`treasuries.cuspid`, a legacy column name), `settings.name`
 - **Unique constraints** prevent duplicate business records (e.g., same option opened twice)
 
 **Schema Management**:
-- `schema.sql` is the single source of truth (embedded via `//go:embed`) and defines the base schema
+- `schema.sql` defines the embedded base schema for newly created databases
 - Incremental schema changes are managed via embedded SQL migrations in `internal/database/migrations/*.sql`, which are executed at startup
 - SQLite WAL mode with foreign keys enabled: `?_busy_timeout=10000&_journal_mode=WAL&_foreign_keys=on`
 
@@ -182,7 +182,7 @@ func (s *OptionService) GetByID(id int) (*Option, error)
 func (s *OptionService) Update(id int, updates map[string]interface{}) error
 
 // Compound key fallbacks (legacy compatibility)
-func (s *OptionService) GetByCompoundKey(symbol, type string, opened time.Time, ...) (*Option, error)
+func (s *OptionService) GetByCompoundKey(symbol, optionType string, opened time.Time, strike float64) (*Option, error)
 ```
 
 ### Database Query Patterns
@@ -321,9 +321,9 @@ The database schema follows modern best practices for web applications:
 - **Check Constraints**: Validate option types (`'Put'` or `'Call'`)
 
 ### Schema Migration
-- **`internal/database/schema.sql`**: Single source of truth for database structure
-- **No Migration Files**: Removed legacy migration files; schema.sql is authoritative
-- **Automatic Setup**: Database tables created via `CREATE TABLE IF NOT EXISTS`
+- **`internal/database/schema.sql`**: Base schema for newly created databases
+- **`internal/database/migrations/*.sql`**: Timestamped embedded migrations are the source of truth for schema changes in existing databases
+- **Required change process**: Update `schema.sql` and add a new migration; never edit an applied migration or rely on ad-hoc `CREATE TABLE IF NOT EXISTS`
 
 ## Database Management
 
@@ -351,9 +351,10 @@ To get started, use `go run main.go`, visit http://localhost:8080/help, switch t
 ### Adding New Domain Entity
 1. Create model struct in `internal/models/{entity}.go` with service pattern
 2. Add table schema to `internal/database/schema.sql`
-3. Implement CRUD methods: `Create`, `GetByID`, `Update`, `Delete`, `GetAll`
-4. Add handler in `internal/web/{entity}_handlers.go` with API endpoints
-5. Create HTML template in `internal/web/templates/{entity}.html`
+3. **Required:** Add a timestamped embedded migration in `internal/database/migrations/` for existing databases; never modify an existing migration or rely on an ad-hoc `CREATE TABLE IF NOT EXISTS`
+4. Implement CRUD methods: `Create`, `GetByID`, `Update`, `Delete`, `GetAll`
+5. Add handler in `internal/web/{entity}_handlers.go` with API endpoints
+6. Create HTML template in `internal/web/templates/{entity}.html`
 
 ### Adding API Endpoint
 ```go
@@ -393,7 +394,7 @@ go test -v ./internal/polygon/
    - `{PROVIDER_NAME}_API_KEY` - API key for the new provider
 5. Update `GetAPIKeyStatus()` to handle the new provider's API key validation
 6. Add rate limiting logic in `GetRateLimitDelay()` if needed
-7. Create tests in `test/providers_test.go` for the new provider
+7. Create unit tests in `internal/providers/{provider_name}_test.go` for the new provider
 
 Example provider structure:
 ```go
@@ -421,4 +422,4 @@ func (p *NewProvider) Name() string {
 - `CLAUDE.md`: AI agent development instructions
 - `model.md`: Complete database schema specification
 - `README.md`: User-facing documentation and quick start
-- `internal/database/schema.sql`: Authoritative database structure
+- `internal/database/schema.sql`: Base schema for new databases; pair schema changes with a timestamped migration

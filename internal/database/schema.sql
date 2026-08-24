@@ -85,7 +85,7 @@ INSERT OR IGNORE INTO settings (name, value, description)
 VALUES ('POLYGON_API_KEY', '', 'API key for Polygon.io stock market data integration');
 
 INSERT OR IGNORE INTO settings (name, value, description)
-VALUES ('GOOGLE_FINANCE_EXCHANGE', 'NASDAQ', 'Default exchange for Google Finance symbols');
+VALUES ('GOOGLE_FINANCE_EXCHANGE', 'NASDAQ', 'Legacy default exchange; new symbols select their market individually');
 
 
 -- Indexes for performance

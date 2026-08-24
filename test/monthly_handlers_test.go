@@ -408,7 +408,7 @@ func createDeterministicMonthlyData(t *testing.T, db *database.DB) {
 	dividendService := models.NewDividendService(db.DB)
 
 	// Create symbols
-	symbols := []string{"AAPL", "TSLA", "NVDA"}
+	symbols := []string{"NASDAQ:AAPL", "NASDAQ:TSLA", "NASDAQ:NVDA"}
 	for _, symbol := range symbols {
 		if _, err := symbolService.Create(symbol); err != nil {
 			t.Fatalf("Failed to create symbol %s: %v", symbol, err)

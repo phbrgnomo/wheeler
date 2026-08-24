@@ -1,7 +1,7 @@
 # Wheeler Development Instructions for AI Agents
 
 ## Project Context
-Wheeler is a Go web application for tracking options trading strategies (particularly "wheel strategy"), with SQLite persistence and Polygon.io market data integration. The core domain involves sophisticated financial tracking: cash-secured puts, covered calls, stock assignments, dividends, and Treasury collateral management.
+Wheeler is a Go web application for tracking options trading strategies (particularly the "wheel strategy"), with SQLite persistence and Polygon.io market data integration. The core domain involves sophisticated financial tracking: cash-secured puts, covered calls, stock assignments, dividends, and Treasury collateral management.
 
 ## Architecture Overview
 
@@ -32,10 +32,11 @@ Services use **ID-based CRUD** operations (`GetByID`, `Update`, `Delete`) for we
 - Application code depends on this abstraction rather than any specific vendor
 - New providers should implement this interface and be registered via the provider layer
 
+### Provider Workflows (`internal/providers/`)
+- `service.go`: Selects configured providers and performs provider-independent market-data workflows.
+
 ### Polygon Provider (`internal/polygon/`)
-- Default implementation of the market data provider interface using the Polygon.io REST API
-- `client.go`: HTTP client wrapper around Polygon.io endpoints
-- `service.go`: Business logic layer for fetching quotes, aggregates, and ticker details via the provider interface
+- `client.go`: HTTP client wrapper around Polygon.io endpoints.
 
 ### Web Layer (`internal/web/`)
 **Handler Organization**:
@@ -86,7 +87,7 @@ func (s *OptionService) GetByID(id int) (*Option, error)
 func (s *OptionService) Update(id int, updates map[string]interface{}) error
 
 // Compound key fallbacks (legacy compatibility)
-func (s *OptionService) GetByCompoundKey(symbol, type string, opened time.Time, ...) (*Option, error)
+func (s *OptionService) GetByCompoundKey(symbol, optionType string, opened time.Time, strike float64) (*Option, error)
 ```
 
 ### Database Query Patterns
@@ -175,4 +176,4 @@ go test -v ./internal/polygon/
 - `CLAUDE.md`: Comprehensive development guidance (250+ lines)
 - `model.md`: Complete database schema specification
 - `README.md`: User-facing documentation and quick start
-- `internal/database/schema.sql`: Authoritative database structure
+- `internal/database/schema.sql`: Base schema for new databases; pair schema changes with a timestamped migration

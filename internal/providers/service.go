@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"stonks/internal/markets"
 	"stonks/internal/models"
 	"strings"
 	"time"
@@ -20,20 +21,65 @@ const (
 	providerTypePolygon  = "polygon"
 	providerTypeGoogle   = "google_finance"
 	providerTypeYFinance = "yfinance"
+	// bulkPriceUpdateLimit keeps Polygon's 12-second free-tier pacing safely
+	// within the five-minute web request deadline. The remainder is reported
+	// to callers so it can be refreshed in a later request.
+	bulkPriceUpdateLimit = 20
 )
 
-// normalizeProviderType keeps user-facing aliases in one place and returns
-// the canonical identifier used by provider selection, status, and throttling.
-func normalizeProviderType(raw string) string {
+// ProviderProfile describes the configuration and capabilities of a market
+// data provider. Provider IDs are stored per database in DATA_PROVIDER_TYPE.
+type ProviderProfile struct {
+	ID                string        `json:"id"`
+	DisplayName       string        `json:"display_name"`
+	RequiresAPIKey    bool          `json:"requires_api_key"`
+	SupportsDividends bool          `json:"supports_dividends"`
+	RateLimitDelay    time.Duration `json:"-"`
+}
+
+var providerProfiles = map[string]ProviderProfile{
+	providerTypePolygon: {
+		ID: providerTypePolygon, DisplayName: "Polygon.io", RequiresAPIKey: true,
+		SupportsDividends: true, RateLimitDelay: 12 * time.Second,
+	},
+	providerTypeGoogle: {
+		ID: providerTypeGoogle, DisplayName: "Google Finance",
+		SupportsDividends: false, RateLimitDelay: 2 * time.Second,
+	},
+	providerTypeYFinance: {
+		ID: providerTypeYFinance, DisplayName: "Yahoo Finance (yfinance)",
+		SupportsDividends: true, RateLimitDelay: 2 * time.Second,
+	},
+}
+
+// CanonicalProviderType normalizes supported aliases. The empty value keeps
+// the historical default of Polygon. Unsupported values return ok=false.
+func CanonicalProviderType(raw string) (providerType string, ok bool) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "", providerTypePolygon:
-		return providerTypePolygon
+		return providerTypePolygon, true
 	case "google", "googlefinance", providerTypeGoogle:
-		return providerTypeGoogle
+		return providerTypeGoogle, true
 	case "yahoo", "yahoo_finance", providerTypeYFinance:
-		return providerTypeYFinance
+		return providerTypeYFinance, true
 	default:
-		return strings.ToLower(strings.TrimSpace(raw))
+		return "", false
+	}
+}
+
+func normalizeProviderType(raw string) string {
+	if providerType, ok := CanonicalProviderType(raw); ok {
+		return providerType
+	}
+	return strings.ToLower(strings.TrimSpace(raw))
+}
+
+// ProviderProfiles returns the supported profiles in stable UI order.
+func ProviderProfiles() []ProviderProfile {
+	return []ProviderProfile{
+		providerProfiles[providerTypePolygon],
+		providerProfiles[providerTypeGoogle],
+		providerProfiles[providerTypeYFinance],
 	}
 }
 
@@ -41,6 +87,7 @@ func normalizeProviderType(raw string) string {
 type BulkPriceUpdateResult struct {
 	Updated int
 	Failed  int
+	Skipped int
 	Errors  []string
 }
 
@@ -90,11 +137,7 @@ func (s *Service) getProvider() (Provider, error) {
 
 		return NewPolygonProvider(apiKey), nil
 	case providerTypeGoogle:
-		exchange := strings.ToUpper(strings.TrimSpace(s.settingService.GetValue("GOOGLE_FINANCE_EXCHANGE")))
-		if exchange == "" {
-			exchange = "NASDAQ"
-		}
-		return NewGoogleFinanceProvider(exchange), nil
+		return NewGoogleFinanceProvider(""), nil
 	case providerTypeYFinance:
 		return NewYFinanceProvider(), nil
 	default:
@@ -102,22 +145,44 @@ func (s *Service) getProvider() (Provider, error) {
 	}
 }
 
+func (s *Service) providerType() string {
+	return normalizeProviderType(s.settingService.GetValue("DATA_PROVIDER_TYPE"))
+}
+
+func (s *Service) resolveProviderSymbol(symbol string) (string, error) {
+	instrument, err := markets.Parse(symbol)
+	if err != nil {
+		return "", err
+	}
+	return markets.ProviderSymbol(s.providerType(), instrument)
+}
+
+// ActiveProfile returns the current provider profile. Unsupported persisted
+// values return a zero profile so callers can report configuration errors.
+func (s *Service) ActiveProfile() ProviderProfile {
+	return providerProfiles[normalizeProviderType(s.settingService.GetValue("DATA_PROVIDER_TYPE"))]
+}
+
 // UpdateSymbolPrice updates a single symbol's price from the configured provider
 func (s *Service) UpdateSymbolPrice(ctx context.Context, symbol string) error {
+	providerSymbol, err := s.resolveProviderSymbol(symbol)
+	if err != nil {
+		return err
+	}
 	provider, err := s.getProvider()
 	if err != nil {
 		return fmt.Errorf("failed to get provider: %w", err)
 	}
 
-	return s.updateSymbolPriceWithProvider(ctx, provider, symbol)
+	return s.updateSymbolPriceWithProvider(ctx, provider, symbol, providerSymbol)
 }
 
 // updateSymbolPriceWithProvider updates a single symbol's price using a pre-fetched provider
-func (s *Service) updateSymbolPriceWithProvider(ctx context.Context, provider Provider, symbol string) error {
+func (s *Service) updateSymbolPriceWithProvider(ctx context.Context, provider Provider, symbol, providerSymbol string) error {
 	log.Printf("[PROVIDER] Updating price for symbol: %s using %s", symbol, provider.Name())
 
 	// Get current price from provider
-	quote, err := provider.GetQuote(ctx, symbol)
+	quote, err := provider.GetQuote(ctx, providerSymbol)
 	if err != nil {
 		return fmt.Errorf("failed to get quote for %s: %w", symbol, err)
 	}
@@ -179,24 +244,28 @@ func (s *Service) UpdateSymbolPrices(ctx context.Context, symbols []string) (*Bu
 
 // FetchSymbolDetails gets detailed information about a symbol from the provider
 func (s *Service) FetchSymbolDetails(ctx context.Context, symbol string) (*SymbolInfo, error) {
+	providerSymbol, err := s.resolveProviderSymbol(symbol)
+	if err != nil {
+		return nil, err
+	}
 	provider, err := s.getProvider()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get provider: %w", err)
 	}
 
-	details, err := provider.GetTickerDetails(ctx, symbol)
+	details, err := provider.GetTickerDetails(ctx, providerSymbol)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get ticker details: %w", err)
 	}
 
-	quote, err := provider.GetQuote(ctx, symbol)
+	quote, err := provider.GetQuote(ctx, providerSymbol)
 	if err != nil {
 		log.Printf("[PROVIDER] Warning: failed to get current price for %s: %v", symbol, err)
 		// Continue without current price
 	}
 
 	info := &SymbolInfo{
-		Symbol:      details.Symbol,
+		Symbol:      symbol,
 		Name:        details.Name,
 		Market:      details.Market,
 		Type:        details.Type,
@@ -221,6 +290,10 @@ func (s *Service) FetchSymbolDetails(ctx context.Context, symbol string) (*Symbo
 
 // FetchDividendHistory gets recent dividend history for a symbol
 func (s *Service) FetchDividendHistory(ctx context.Context, symbol string, limit int) ([]*DividendInfo, error) {
+	providerSymbol, err := s.resolveProviderSymbol(symbol)
+	if err != nil {
+		return nil, err
+	}
 	provider, err := s.getProvider()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get provider: %w", err)
@@ -230,7 +303,7 @@ func (s *Service) FetchDividendHistory(ctx context.Context, symbol string, limit
 		limit = 10
 	}
 
-	dividends, err := provider.GetDividends(ctx, symbol, limit)
+	dividends, err := provider.GetDividends(ctx, providerSymbol, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dividends: %w", err)
 	}
@@ -258,9 +331,21 @@ func (s *Service) FetchDividendHistoryForSymbols(ctx context.Context, symbols []
 	rateLimitDelay := s.GetRateLimitDelay()
 	result := &BulkDividendFetchResult{Results: []DividendFetchRecord{}}
 
-	for idx, symbol := range normalized {
+	providerCalls := 0
+	for _, symbol := range normalized {
 		result.Processed++
-		dividends, fetchErr := provider.GetDividends(ctx, symbol, limit)
+		providerSymbol, resolveErr := s.resolveProviderSymbol(symbol)
+		if resolveErr != nil {
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", symbol, resolveErr))
+			continue
+		}
+		if providerCalls > 0 {
+			if err := s.waitForRateLimit(ctx, rateLimitDelay); err != nil {
+				return result, err
+			}
+		}
+		dividends, fetchErr := provider.GetDividends(ctx, providerSymbol, limit)
+		providerCalls++
 		if fetchErr != nil {
 			log.Printf("[PROVIDER] Failed to fetch dividends for %s: %v", symbol, fetchErr)
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", symbol, fetchErr))
@@ -271,11 +356,6 @@ func (s *Service) FetchDividendHistoryForSymbols(ctx context.Context, symbols []
 			})
 		}
 
-		if idx < len(normalized)-1 {
-			if err := s.waitForRateLimit(ctx, rateLimitDelay); err != nil {
-				return result, err
-			}
-		}
 	}
 
 	log.Printf("[PROVIDER] Dividend fetch complete: %d symbols processed", result.Processed)
@@ -295,6 +375,10 @@ func (s *Service) TestConnection(ctx context.Context) error {
 // GetAPIKeyStatus returns information about the current API key configuration
 func (s *Service) GetAPIKeyStatus() *APIKeyStatus {
 	providerType := normalizeProviderType(s.settingService.GetValue("DATA_PROVIDER_TYPE"))
+	profile, supported := providerProfiles[providerType]
+	if !supported {
+		return &APIKeyStatus{Provider: providerType}
+	}
 
 	var apiKey string
 
@@ -302,21 +386,25 @@ func (s *Service) GetAPIKeyStatus() *APIKeyStatus {
 	case providerTypePolygon:
 		apiKey = s.settingService.GetValue("POLYGON_API_KEY")
 	case providerTypeGoogle, providerTypeYFinance:
-		return &APIKeyStatus{Configured: true, Masked: "Not required", Valid: true}
-		// Add additional providers here as they are supported, for example:
-		// case "alpaca":
-		//     apiKey = s.settingService.GetValue("ALPACA_API_KEY")
-	default:
-		// Unknown or unsupported provider type; report as not configured
 		return &APIKeyStatus{
-			Configured: false,
-			Masked:     "",
+			Provider:          profile.ID,
+			DisplayName:       profile.DisplayName,
+			RequiresAPIKey:    false,
+			SupportsDividends: profile.SupportsDividends,
+			Configured:        false,
+			Ready:             true,
+			Masked:            "Not required",
 		}
 	}
 
 	status := &APIKeyStatus{
-		Configured: apiKey != "",
-		Masked:     "",
+		Provider:          profile.ID,
+		DisplayName:       profile.DisplayName,
+		RequiresAPIKey:    profile.RequiresAPIKey,
+		SupportsDividends: profile.SupportsDividends,
+		Configured:        apiKey != "",
+		Ready:             apiKey != "",
+		Masked:            "",
 	}
 
 	if !status.Configured {
@@ -340,20 +428,10 @@ func (s *Service) Name() string {
 
 // GetRateLimitDelay returns the rate limit delay based on the configured provider
 func (s *Service) GetRateLimitDelay() time.Duration {
-	providerType := normalizeProviderType(s.settingService.GetValue("DATA_PROVIDER_TYPE"))
-
-	switch providerType {
-	case providerTypePolygon:
-		// Polygon.io Free tier allows 5 requests per minute (approx. 1 request every 12 seconds)
-		return 12 * time.Second
-	case providerTypeGoogle:
-		return 2 * time.Second
-	case providerTypeYFinance:
-		return 2 * time.Second
-	default:
-		// Conservative default for unknown providers
-		return 10 * time.Second
+	if profile := s.ActiveProfile(); profile.ID != "" {
+		return profile.RateLimitDelay
 	}
+	return 10 * time.Second
 }
 
 // SymbolInfo represents enriched symbol information from a provider
@@ -389,30 +467,47 @@ type DividendInfo struct {
 
 // APIKeyStatus represents the status of the provider API key
 type APIKeyStatus struct {
-	Configured bool   `json:"configured"`
-	Masked     string `json:"masked"`
-	Valid      bool   `json:"valid"`
-	Error      string `json:"error,omitempty"`
+	Provider          string `json:"provider"`
+	DisplayName       string `json:"display_name"`
+	RequiresAPIKey    bool   `json:"requires_api_key"`
+	SupportsDividends bool   `json:"supports_dividends"`
+	Configured        bool   `json:"configured"`
+	Ready             bool   `json:"ready"`
+	Masked            string `json:"masked"`
+	Valid             bool   `json:"valid"`
+	Error             string `json:"error,omitempty"`
 }
 
 func (s *Service) runPriceUpdates(ctx context.Context, provider Provider, symbols []string) (*BulkPriceUpdateResult, error) {
 	rateLimitDelay := s.GetRateLimitDelay()
 	result := &BulkPriceUpdateResult{}
+	if len(symbols) > bulkPriceUpdateLimit {
+		result.Skipped = len(symbols) - bulkPriceUpdateLimit
+		symbols = symbols[:bulkPriceUpdateLimit]
+		log.Printf("[PROVIDER] Limiting this bulk price update to %d symbols; %d remaining", len(symbols), result.Skipped)
+	}
 
-	for idx, symbol := range symbols {
-		if err := s.updateSymbolPriceWithProvider(ctx, provider, symbol); err != nil {
+	providerCalls := 0
+	for _, symbol := range symbols {
+		providerSymbol, resolveErr := s.resolveProviderSymbol(symbol)
+		if resolveErr != nil {
+			result.Failed++
+			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", symbol, resolveErr))
+			continue
+		}
+		if providerCalls > 0 {
+			if err := s.waitForRateLimit(ctx, rateLimitDelay); err != nil {
+				return result, err
+			}
+		}
+		if err := s.updateSymbolPriceWithProvider(ctx, provider, symbol, providerSymbol); err != nil {
 			result.Failed++
 			result.Errors = append(result.Errors, fmt.Sprintf("%s: %v", symbol, err))
 			log.Printf("[PROVIDER] Failed to update %s: %v", symbol, err)
 		} else {
 			result.Updated++
 		}
-
-		if idx < len(symbols)-1 {
-			if err := s.waitForRateLimit(ctx, rateLimitDelay); err != nil {
-				return result, err
-			}
-		}
+		providerCalls++
 	}
 
 	return result, nil
@@ -453,6 +548,9 @@ func (s *Service) normalizeSymbols(symbols []string) []string {
 func convertDividendsToInfo(dividends []*Dividend) []*DividendInfo {
 	result := make([]*DividendInfo, 0, len(dividends))
 	for _, div := range dividends {
+		if div == nil {
+			continue
+		}
 		result = append(result, &DividendInfo{
 			Symbol:          div.Symbol,
 			CashAmount:      div.CashAmount,

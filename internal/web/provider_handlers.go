@@ -4,16 +4,27 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
-	"regexp"
+	"stonks/internal/markets"
 	"strings"
 	"time"
 
 	"stonks/internal/providers"
 )
 
-var symbolPattern = regexp.MustCompile(`^[A-Z0-9.\-]{1,10}$`)
+func validateSymbols(symbols []string) ([]string, error) {
+	validated := make([]string, 0, len(symbols))
+	for _, raw := range symbols {
+		instrument, err := markets.Parse(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid symbol %q: %w", raw, err)
+		}
+		validated = append(validated, instrument.Key())
+	}
+	return validated, nil
+}
 
 func (s *Server) providerLogPrefix() string {
 	name := strings.ToUpper(strings.TrimSpace(s.providerService.Name()))
@@ -48,7 +59,7 @@ func (s *Server) providerTestHandler(w http.ResponseWriter, r *http.Request) {
 		response["error"] = err.Error()
 		log.Printf("%s Connection test failed: %v", logPrefix, err)
 	} else {
-		response["message"] = "API key is valid and connection successful"
+		response["message"] = "Provider connection successful"
 		log.Printf("%s Connection test successful", logPrefix)
 	}
 
@@ -74,9 +85,11 @@ func (s *Server) providerUpdatePricesHandler(w http.ResponseWriter, r *http.Requ
 		All     bool     `json:"all,omitempty"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		// If decoding fails, default to updating all symbols
+	if err := json.NewDecoder(r.Body).Decode(&request); err == io.EOF {
 		request.All = true
+	} else if err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -90,7 +103,12 @@ func (s *Server) providerUpdatePricesHandler(w http.ResponseWriter, r *http.Requ
 	if request.All || len(request.Symbols) == 0 {
 		result, err = s.providerService.UpdateAllSymbolPrices(ctx)
 	} else {
-		result, err = s.providerService.UpdateSymbolPrices(ctx, request.Symbols)
+		validated, validateErr := validateSymbols(request.Symbols)
+		if validateErr != nil {
+			http.Error(w, validateErr.Error(), http.StatusBadRequest)
+			return
+		}
+		result, err = s.providerService.UpdateSymbolPrices(ctx, validated)
 	}
 
 	if result == nil {
@@ -102,6 +120,7 @@ func (s *Server) providerUpdatePricesHandler(w http.ResponseWriter, r *http.Requ
 		"success": success,
 		"updated": result.Updated,
 		"failed":  result.Failed,
+		"skipped": result.Skipped,
 	}
 
 	if len(result.Errors) > 0 {
@@ -113,6 +132,9 @@ func (s *Server) providerUpdatePricesHandler(w http.ResponseWriter, r *http.Requ
 		log.Printf("%s Price update failed: %v", logPrefix, err)
 	} else if success {
 		response["message"] = "Price update completed"
+		if result.Skipped > 0 {
+			response["message"] = fmt.Sprintf("Price update completed; %d symbols remain for a later request", result.Skipped)
+		}
 		log.Printf("%s Price update completed: %d updated, %d failed", logPrefix, result.Updated, result.Failed)
 	} else {
 		response["message"] = "No prices were updated"
@@ -139,11 +161,12 @@ func (s *Server) providerSymbolInfoHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	symbol := strings.ToUpper(path)
-	if !symbolPattern.MatchString(symbol) {
-		http.Error(w, "Invalid symbol", http.StatusBadRequest)
+	instrument, err := markets.Parse(path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	symbol := instrument.Key()
 	logPrefix := s.providerLogPrefix()
 	log.Printf("%s Getting symbol info for: %s", logPrefix, symbol)
 
@@ -164,11 +187,12 @@ func (s *Server) providerSymbolInfoHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Get dividend history (optional)
-	dividends, err := s.providerService.FetchDividendHistory(ctx, symbol, 5)
-	if err != nil {
-		log.Printf("%s Warning: failed to get dividend history for %s: %v", logPrefix, symbol, err)
-		// Continue without dividends
+	var dividends []*providers.DividendInfo
+	if s.providerService.ActiveProfile().SupportsDividends {
+		dividends, err = s.providerService.FetchDividendHistory(ctx, symbol, 5)
+		if err != nil {
+			log.Printf("%s Warning: failed to get dividend history for %s: %v", logPrefix, symbol, err)
+		}
 	}
 
 	response := map[string]interface{}{
@@ -198,17 +222,14 @@ func (s *Server) providerStatusHandler(w http.ResponseWriter, r *http.Request) {
 	status := s.providerService.GetAPIKeyStatus()
 	logPrefix := s.providerLogPrefix()
 
-	// Test connection if API key is configured
-	if status.Configured {
+	// Keyless providers are ready to test without an API key.
+	if status.Ready {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		if err := s.providerService.TestConnection(ctx); err != nil {
-			status.Valid = false
-			status.Error = err.Error()
-		} else {
-			status.Valid = true
-		}
+		status.Valid, status.Error = s.cachedProviderValidation(status.Provider, func() error {
+			return s.providerService.TestConnection(ctx)
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -226,6 +247,10 @@ func (s *Server) providerFetchDividendsHandler(w http.ResponseWriter, r *http.Re
 
 	logPrefix := s.providerLogPrefix()
 	log.Printf("%s Starting bulk dividend fetch request", logPrefix)
+	if !s.providerService.ActiveProfile().SupportsDividends {
+		http.Error(w, "The configured provider does not support dividend history", http.StatusConflict)
+		return
+	}
 
 	// Parse request body to get specific symbols (optional)
 	var request struct {
@@ -234,9 +259,11 @@ func (s *Server) providerFetchDividendsHandler(w http.ResponseWriter, r *http.Re
 		Limit   int      `json:"limit,omitempty"`
 	}
 
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		// If decoding fails, default to fetching all symbols
+	if err := json.NewDecoder(r.Body).Decode(&request); err == io.EOF {
 		request.All = true
+	} else if err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
 	}
 
 	if request.Limit == 0 {
@@ -256,7 +283,12 @@ func (s *Server) providerFetchDividendsHandler(w http.ResponseWriter, r *http.Re
 			return
 		}
 	} else {
-		symbols = request.Symbols
+		validated, validateErr := validateSymbols(request.Symbols)
+		if validateErr != nil {
+			http.Error(w, validateErr.Error(), http.StatusBadRequest)
+			return
+		}
+		symbols = validated
 	}
 
 	result, err := s.providerService.FetchDividendHistoryForSymbols(ctx, symbols, request.Limit)

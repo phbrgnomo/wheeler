@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,7 +15,8 @@ const googleFinanceFixture = `<!doctype html>
 <body><meta itemprop="price" content="189.42"><span>· USD</span></body></html>`
 
 type googleFinanceRoundTripper struct {
-	body string
+	body       string
+	statusCode int
 }
 
 type googleFinanceValidationRoundTripper struct{}
@@ -32,11 +34,15 @@ func (googleFinanceValidationRoundTripper) RoundTrip(request *http.Request) (*ht
 }
 
 func (t googleFinanceRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
-	if request.URL.Path != "/finance/quote/AAPL:NASDAQ" {
+	if request.URL.Path != "/finance/quote/AAPL:NASDAQ" && request.URL.Path != "/finance/quote/MISSING:NASDAQ" {
 		return nil, fmt.Errorf("unexpected path: %s", request.URL.Path)
 	}
+	statusCode := t.statusCode
+	if statusCode == 0 {
+		statusCode = http.StatusOK
+	}
 	return &http.Response{
-		StatusCode: http.StatusOK,
+		StatusCode: statusCode,
 		Body:       io.NopCloser(strings.NewReader(t.body)),
 		Header:     make(http.Header),
 		Request:    request,
@@ -45,7 +51,7 @@ func (t googleFinanceRoundTripper) RoundTrip(request *http.Request) (*http.Respo
 
 func TestGoogleFinanceProviderQuoteAndDetails(t *testing.T) {
 	provider := newGoogleFinanceProviderForTest(&http.Client{Transport: googleFinanceRoundTripper{body: googleFinanceFixture}}, "http://google.test", "NASDAQ")
-	quote, err := provider.GetQuote(context.Background(), "AAPL")
+	quote, err := provider.GetQuote(context.Background(), "AAPL:NASDAQ")
 	if err != nil {
 		t.Fatalf("GetQuote failed: %v", err)
 	}
@@ -53,7 +59,7 @@ func TestGoogleFinanceProviderQuoteAndDetails(t *testing.T) {
 		t.Fatalf("unexpected quote: %+v", quote)
 	}
 
-	details, err := provider.GetTickerDetails(context.Background(), "NASDAQ:AAPL")
+	details, err := provider.GetTickerDetails(context.Background(), "AAPL:NASDAQ")
 	if err != nil {
 		t.Fatalf("GetTickerDetails failed: %v", err)
 	}
@@ -64,16 +70,24 @@ func TestGoogleFinanceProviderQuoteAndDetails(t *testing.T) {
 
 func TestGoogleFinanceProviderMissingPrice(t *testing.T) {
 	provider := newGoogleFinanceProviderForTest(&http.Client{Transport: googleFinanceRoundTripper{body: "<html><title>Not found</title></html>"}}, "http://google.test", "NASDAQ")
-	_, err := provider.GetQuote(context.Background(), "AAPL")
+	_, err := provider.GetQuote(context.Background(), "AAPL:NASDAQ")
 	if err == nil || !strings.Contains(err.Error(), "current price was not found") {
 		t.Fatalf("expected missing-price error, got %v", err)
+	}
+}
+
+func TestGoogleFinanceProviderUnknownSymbol(t *testing.T) {
+	provider := newGoogleFinanceProviderForTest(&http.Client{Transport: googleFinanceRoundTripper{statusCode: http.StatusNotFound}}, "http://google.test", "")
+	_, err := provider.GetQuote(context.Background(), "MISSING:NASDAQ")
+	if err == nil || !strings.Contains(err.Error(), `unknown symbol "MISSING:NASDAQ"`) {
+		t.Fatalf("expected unknown-symbol error, got %v", err)
 	}
 }
 
 func TestGoogleFinanceProviderDividendsAreExplicitlyUnsupported(t *testing.T) {
 	provider := NewGoogleFinanceProvider("NASDAQ")
 	_, err := provider.GetDividends(context.Background(), "AAPL", 10)
-	if err != errGoogleFinanceDividendsUnsupported {
+	if !errors.Is(err, errGoogleFinanceDividendsUnsupported) {
 		t.Fatalf("expected unsupported dividend error, got %v", err)
 	}
 }

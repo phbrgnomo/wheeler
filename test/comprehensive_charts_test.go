@@ -235,7 +235,7 @@ func createComprehensiveTestData(t *testing.T, db *database.DB) {
 	treasuryService := models.NewTreasuryService(db.DB)
 
 	// Create multiple symbols
-	symbols := []string{"AAPL", "TSLA", "NVDA", "MSFT", "GOOGL"}
+	symbols := []string{"NASDAQ:AAPL", "NASDAQ:TSLA", "NASDAQ:NVDA", "NASDAQ:MSFT", "NASDAQ:GOOGL"}
 	prices := []float64{150.0, 200.0, 400.0, 350.0, 2500.0}
 
 	for i, symbol := range symbols {
@@ -323,7 +323,7 @@ func createLargeTestData(t *testing.T, db *database.DB) {
 
 	// Create many symbols
 	for i := 0; i < 50; i++ {
-		symbol := fmt.Sprintf("SYMBOL%03d", i+1)
+		symbol := fmt.Sprintf("NASDAQ:SYMBOL%03d", i+1)
 		if _, err := symbolService.Create(symbol); err != nil {
 			t.Fatalf("Failed to create symbol %s: %v", symbol, err)
 		}

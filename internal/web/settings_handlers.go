@@ -6,18 +6,21 @@ import (
 	"log"
 	"net/http"
 	"stonks/internal/models"
+	"stonks/internal/providers"
 	"strings"
 	"unicode"
 )
 
 // SettingsData holds data for the settings template
 type SettingsData struct {
-	Settings     []*models.Setting `json:"settings"`
-	AllSymbols   []string          `json:"allSymbols"`
-	CurrentDB    string            `json:"currentDB"`
-	ApiKey       string            `json:"apiKey"`
-	ProviderName string            `json:"providerName"`
-	ActivePage   string            `json:"activePage"`
+	Settings         []*models.Setting           `json:"settings"`
+	AllSymbols       []string                    `json:"allSymbols"`
+	CurrentDB        string                      `json:"currentDB"`
+	ApiKey           string                      `json:"apiKey"`
+	ActiveProvider   string                      `json:"activeProvider"`
+	ProviderName     string                      `json:"providerName"`
+	ProviderProfiles []providers.ProviderProfile `json:"providerProfiles"`
+	ActivePage       string                      `json:"activePage"`
 }
 
 // settingsHandler serves the settings management page
@@ -38,16 +41,22 @@ func (s *Server) settingsHandler(w http.ResponseWriter, r *http.Request) {
 		settings = []*models.Setting{}
 	}
 
-	// Get API key value specifically
-	apiKey := s.settingService.GetValue("POLYGON_API_KEY")
+	profile := s.providerService.ActiveProfile()
+	providerName := profile.DisplayName
+	if providerName == "" {
+		providerName = formatProviderDisplayName(s.providerService.Name())
+	}
 
+	apiKey := s.settingService.GetValue("POLYGON_API_KEY")
 	data := SettingsData{
-		Settings:     settings,
-		AllSymbols:   symbols,
-		CurrentDB:    s.getCurrentDatabaseName(),
-		ApiKey:       apiKey,
-		ProviderName: formatProviderDisplayName(s.providerService.Name()),
-		ActivePage:   "settings",
+		Settings:         settings,
+		AllSymbols:       symbols,
+		CurrentDB:        s.getCurrentDatabaseName(),
+		ApiKey:           apiKey,
+		ActiveProvider:   s.providerService.Name(),
+		ProviderName:     providerName,
+		ProviderProfiles: providers.ProviderProfiles(),
+		ActivePage:       "settings",
 	}
 
 	s.renderTemplate(w, "settings.html", data)
@@ -154,6 +163,80 @@ type SettingRequest struct {
 	Description string `json:"description"`
 }
 
+// ProviderConfigurationRequest groups settings that must change together when
+// selecting a market-data provider. Keeping this separate from the generic
+// settings CRUD API makes a provider switch atomic.
+type ProviderConfigurationRequest struct {
+	ProviderType  string `json:"provider_type"`
+	PolygonAPIKey string `json:"polygon_api_key"`
+}
+
+func (s *Server) providerConfigurationAPIHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req ProviderConfigurationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	providerType, ok := providers.CanonicalProviderType(req.ProviderType)
+	if !ok {
+		http.Error(w, fmt.Sprintf("unsupported data provider type: %s", strings.TrimSpace(req.ProviderType)), http.StatusBadRequest)
+		return
+	}
+	profile := providers.ProviderProfile{}
+	for _, candidate := range providers.ProviderProfiles() {
+		if candidate.ID == providerType {
+			profile = candidate
+			break
+		}
+	}
+
+	apiKey := strings.TrimSpace(req.PolygonAPIKey)
+	if profile.RequiresAPIKey && apiKey == "" {
+		http.Error(w, "Polygon API key is required when Polygon.io is selected", http.StatusBadRequest)
+		return
+	}
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		log.Printf("[SETTINGS API] Error starting provider configuration transaction: %v", err)
+		http.Error(w, "Failed to save provider configuration", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	upsert := func(name, value, description string) error {
+		_, err := tx.Exec(`INSERT INTO settings (name, value, description) VALUES (?, ?, ?)
+			ON CONFLICT(name) DO UPDATE SET value = excluded.value, description = excluded.description, updated_at = CURRENT_TIMESTAMP`, name, value, description)
+		return err
+	}
+	if profile.RequiresAPIKey {
+		if err := upsert("POLYGON_API_KEY", apiKey, "API key for Polygon.io stock market data integration"); err != nil {
+			http.Error(w, "Failed to save provider configuration", http.StatusInternalServerError)
+			return
+		}
+	}
+	// Write the active provider last. The transaction makes every change
+	// visible together only after all dependent configuration has succeeded.
+	if err := upsert("DATA_PROVIDER_TYPE", providerType, "Active market data provider"); err != nil {
+		http.Error(w, "Failed to save provider configuration", http.StatusInternalServerError)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		log.Printf("[SETTINGS API] Error committing provider configuration: %v", err)
+		http.Error(w, "Failed to save provider configuration", http.StatusInternalServerError)
+		return
+	}
+
+	s.invalidateProviderValidation()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"provider": providerType})
+}
+
 // createSettingAPI creates a new setting
 func (s *Server) createSettingAPI(w http.ResponseWriter, r *http.Request) {
 	var req SettingRequest
@@ -166,6 +249,10 @@ func (s *Server) createSettingAPI(w http.ResponseWriter, r *http.Request) {
 	// Validate required fields
 	if strings.TrimSpace(req.Name) == "" {
 		http.Error(w, "Setting name is required", http.StatusBadRequest)
+		return
+	}
+	if err := normalizeProviderSetting(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -182,6 +269,7 @@ func (s *Server) createSettingAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("[SETTINGS API] Successfully created setting: %s", setting.Name)
+	s.invalidateProviderValidation()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -198,6 +286,11 @@ func (s *Server) updateSettingAPI(w http.ResponseWriter, r *http.Request, name s
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+	req.Name = name
+	if err := normalizeProviderSetting(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// Update the setting
 	setting, err := s.settingService.Update(name, req.Value, req.Description)
@@ -212,11 +305,30 @@ func (s *Server) updateSettingAPI(w http.ResponseWriter, r *http.Request, name s
 	}
 
 	log.Printf("[SETTINGS API] Successfully updated setting: %s", setting.Name)
+	s.invalidateProviderValidation()
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(setting); err != nil {
 		log.Printf("[SETTINGS API] Error encoding update response: %v", err)
 	}
+}
+
+func normalizeProviderSetting(req *SettingRequest) error {
+	name := strings.ToUpper(strings.TrimSpace(req.Name))
+	switch name {
+	case "DATA_PROVIDER_TYPE":
+		providerType, ok := providers.CanonicalProviderType(req.Value)
+		if !ok {
+			return fmt.Errorf("unsupported data provider type: %s", strings.TrimSpace(req.Value))
+		}
+		req.Value = providerType
+	case "GOOGLE_FINANCE_EXCHANGE":
+		req.Value = strings.ToUpper(strings.TrimSpace(req.Value))
+		if req.Value == "" {
+			req.Value = "NASDAQ"
+		}
+	}
+	return nil
 }
 
 // deleteSettingAPI deletes a setting
@@ -233,6 +345,7 @@ func (s *Server) deleteSettingAPI(w http.ResponseWriter, r *http.Request, name s
 	}
 
 	log.Printf("[SETTINGS API] Successfully deleted setting: %s", name)
+	s.invalidateProviderValidation()
 
 	w.WriteHeader(http.StatusNoContent)
 }

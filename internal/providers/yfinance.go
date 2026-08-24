@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -279,17 +281,13 @@ func firstNonEmpty(values ...string) string {
 }
 
 func parseInt64(value string) (int64, error) {
-	var result int64
-	_, err := fmt.Sscan(value, &result)
-	return result, err
+	return strconv.ParseInt(strings.TrimSpace(value), 10, 64)
 }
 
 func sortDividendsNewestFirst(items []*Dividend) {
-	for i := 1; i < len(items); i++ {
-		for j := i; j > 0 && items[j].ExDividendDate > items[j-1].ExDividendDate; j-- {
-			items[j], items[j-1] = items[j-1], items[j]
-		}
-	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].ExDividendDate > items[j].ExDividendDate
+	})
 }
 
 var _ Provider = (*YFinanceProvider)(nil)

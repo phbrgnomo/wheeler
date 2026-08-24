@@ -14,22 +14,41 @@ import (
 	"stonks/internal/providers"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
 type Server struct {
-	db                  *sql.DB
-	optionService       *models.OptionService
-	symbolService       *models.SymbolService
-	treasuryService     *models.TreasuryService
-	longPositionService *models.LongPositionService
-	dividendService     *models.DividendService
-	settingService      *models.SettingService
-	metricService       *models.MetricService
-	providerService     *providers.Service
-	templates           *template.Template
+	servicesMu                   sync.RWMutex
+	db                           *sql.DB
+	optionService                *models.OptionService
+	symbolService                *models.SymbolService
+	treasuryService              *models.TreasuryService
+	longPositionService          *models.LongPositionService
+	dividendService              *models.DividendService
+	settingService               *models.SettingService
+	metricService                *models.MetricService
+	providerService              *providers.Service
+	providerValidation           map[string]providerValidationCacheEntry
+	providerValidationInFlight   map[string]*providerValidationCall
+	providerValidationGeneration uint64
+	providerValidationMu         sync.Mutex
+	templates                    *template.Template
+}
+
+const providerValidationCacheTTL = time.Minute
+
+type providerValidationCacheEntry struct {
+	checkedAt time.Time
+	valid     bool
+	err       string
+}
+
+type providerValidationCall struct {
+	done       chan struct{}
+	generation uint64
 }
 
 func NewServer() (*Server, error) {
@@ -246,22 +265,11 @@ func NewServer() (*Server, error) {
 
 	log.Printf("[SERVER] Initializing service layers")
 
-	// Initialize core services
-	symbolService := models.NewSymbolService(dbWrapper.DB)
-	settingService := models.NewSettingService(dbWrapper.DB)
-
 	server := &Server{
-		db:                  dbWrapper.DB,
-		optionService:       models.NewOptionService(dbWrapper.DB),
-		symbolService:       symbolService,
-		treasuryService:     models.NewTreasuryService(dbWrapper.DB),
-		longPositionService: models.NewLongPositionService(dbWrapper.DB),
-		dividendService:     models.NewDividendService(dbWrapper.DB),
-		settingService:      settingService,
-		metricService:       models.NewMetricService(dbWrapper.DB),
-		providerService:     providers.NewService(symbolService, settingService),
-		templates:           templates,
+		db:        dbWrapper.DB,
+		templates: templates,
 	}
+	server.initializeServices(dbWrapper.DB)
 
 	log.Printf("[SERVER] All services initialized successfully")
 	log.Printf("[SERVER] Server creation completed")
@@ -269,11 +277,113 @@ func NewServer() (*Server, error) {
 	return server, nil
 }
 
+// initializeServices binds every server service to the supplied database.
+// It is used at startup and after a database switch to avoid stale service
+// pointers, including provider configuration from the previous database.
+func (s *Server) initializeServices(db *sql.DB) {
+	s.servicesMu.Lock()
+	defer s.servicesMu.Unlock()
+	s.initializeServicesLocked(db)
+	s.invalidateProviderValidation()
+}
+
+func (s *Server) initializeServicesLocked(db *sql.DB) {
+	s.db = db
+	s.optionService = models.NewOptionService(db)
+	s.symbolService = models.NewSymbolService(db)
+	s.treasuryService = models.NewTreasuryService(db)
+	s.longPositionService = models.NewLongPositionService(db)
+	s.dividendService = models.NewDividendService(db)
+	s.settingService = models.NewSettingService(db)
+	s.metricService = models.NewMetricService(db)
+	s.providerService = providers.NewService(s.symbolService, s.settingService)
+}
+
+func (s *Server) cachedProviderValidation(provider string, validate func() error) (bool, string) {
+	for {
+		s.providerValidationMu.Lock()
+		generation := s.providerValidationGeneration
+		if entry, ok := s.providerValidation[provider]; ok && time.Since(entry.checkedAt) < providerValidationCacheTTL {
+			s.providerValidationMu.Unlock()
+			return entry.valid, entry.err
+		}
+		if call, ok := s.providerValidationInFlight[provider]; ok && call.generation == generation {
+			done := call.done
+			s.providerValidationMu.Unlock()
+			<-done
+			continue
+		}
+		if s.providerValidationInFlight == nil {
+			s.providerValidationInFlight = make(map[string]*providerValidationCall)
+		}
+		call := &providerValidationCall{done: make(chan struct{}), generation: generation}
+		s.providerValidationInFlight[provider] = call
+		s.providerValidationMu.Unlock()
+
+		entry := providerValidationCacheEntry{checkedAt: time.Now()}
+		if err := validate(); err != nil {
+			entry.err = err.Error()
+		} else {
+			entry.valid = true
+		}
+
+		s.providerValidationMu.Lock()
+		if s.providerValidationGeneration == generation {
+			if s.providerValidation == nil {
+				s.providerValidation = make(map[string]providerValidationCacheEntry)
+			}
+			s.providerValidation[provider] = entry
+		}
+		if s.providerValidationInFlight[provider] == call {
+			delete(s.providerValidationInFlight, provider)
+			close(call.done)
+		}
+		isCurrentGeneration := s.providerValidationGeneration == generation
+		s.providerValidationMu.Unlock()
+		if isCurrentGeneration {
+			return entry.valid, entry.err
+		}
+	}
+}
+
+func (s *Server) invalidateProviderValidation() {
+	s.providerValidationMu.Lock()
+	defer s.providerValidationMu.Unlock()
+	s.providerValidation = make(map[string]providerValidationCacheEntry)
+	s.providerValidationGeneration++
+}
+
 // Close closes the database connection
 func (s *Server) Close() error {
+	s.servicesMu.Lock()
+	defer s.servicesMu.Unlock()
 	if s.db != nil {
 		log.Printf("[SERVER] Closing database connection")
 		return s.db.Close()
+	}
+	return nil
+}
+
+func (s *Server) handleServiceFunc(pattern string, handler http.HandlerFunc) {
+	http.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		s.servicesMu.RLock()
+		defer s.servicesMu.RUnlock()
+		handler(w, r)
+	})
+}
+
+// switchServices atomically replaces the service set after all in-flight
+// service handlers complete, then closes the old database before new handlers
+// can observe it.
+func (s *Server) switchServices(db *sql.DB) error {
+	s.servicesMu.Lock()
+	defer s.servicesMu.Unlock()
+
+	oldDB := s.db
+	s.initializeServicesLocked(db)
+	s.invalidateProviderValidation()
+	if oldDB != nil && oldDB != db {
+		return oldDB.Close()
 	}
 	return nil
 }
@@ -285,58 +395,58 @@ func (s *Server) setupRoutes() {
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("internal/web/static"))))
 	log.Printf("[SERVER] Route registered: /static/ -> file server")
 
-	http.HandleFunc("/", s.dashboardHandler)
+	s.handleServiceFunc("/", s.dashboardHandler)
 	log.Printf("[SERVER] Route registered: / -> dashboardHandler")
 
-	http.HandleFunc("/monthly", s.monthlyHandler)
+	s.handleServiceFunc("/monthly", s.monthlyHandler)
 	log.Printf("[SERVER] Route registered: /monthly -> monthlyHandler")
 
-	http.HandleFunc("/options", s.optionsHandler)
+	s.handleServiceFunc("/options", s.optionsHandler)
 	log.Printf("[SERVER] Route registered: /options -> optionsHandler")
 
-	http.HandleFunc("/all-options", s.allOptionsHandler)
+	s.handleServiceFunc("/all-options", s.allOptionsHandler)
 	log.Printf("[SERVER] Route registered: /all-options -> allOptionsHandler")
 
-	http.HandleFunc("/treasuries", s.treasuriesHandler)
+	s.handleServiceFunc("/treasuries", s.treasuriesHandler)
 	log.Printf("[SERVER] Route registered: /treasuries -> treasuriesHandler")
 
-	http.HandleFunc("/dividends", s.dividendsHandler)
+	s.handleServiceFunc("/dividends", s.dividendsHandler)
 	log.Printf("[SERVER] Route registered: /dividends -> dividendsHandler")
 
-	http.HandleFunc("/metrics", s.metricsHandler)
+	s.handleServiceFunc("/metrics", s.metricsHandler)
 	log.Printf("[SERVER] Route registered: /metrics -> metricsHandler")
 
-	http.HandleFunc("/zen", s.zenHandler)
+	s.handleServiceFunc("/zen", s.zenHandler)
 	log.Printf("[SERVER] Route registered: /zen -> zenHandler")
 
-	http.HandleFunc("/symbol/", s.symbolHandler)
+	s.handleServiceFunc("/symbol/", s.symbolHandler)
 	log.Printf("[SERVER] Route registered: /symbol/ -> symbolHandler")
 
-	http.HandleFunc("/api/premium-data", s.premiumDataHandler)
+	s.handleServiceFunc("/api/premium-data", s.premiumDataHandler)
 	log.Printf("[SERVER] Route registered: /api/premium-data -> premiumDataHandler")
 
-	http.HandleFunc("/api/options", s.optionAPIHandler)
+	s.handleServiceFunc("/api/options", s.optionAPIHandler)
 	log.Printf("[SERVER] Route registered: /api/options -> optionAPIHandler")
 
-	http.HandleFunc("/api/options/", s.individualOptionAPIHandler)
+	s.handleServiceFunc("/api/options/", s.individualOptionAPIHandler)
 	log.Printf("[SERVER] Route registered: /api/options/ -> individualOptionAPIHandler")
 
-	http.HandleFunc("/api/options/filter", s.optionsFilterHandler)
+	s.handleServiceFunc("/api/options/filter", s.optionsFilterHandler)
 	log.Printf("[SERVER] Route registered: /api/options/filter -> optionsFilterHandler")
 
-	http.HandleFunc("/api/symbols/", s.symbolAPIHandler)
+	s.handleServiceFunc("/api/symbols/", s.symbolAPIHandler)
 	log.Printf("[SERVER] Route registered: /api/symbols/ -> symbolAPIHandler")
 
-	http.HandleFunc("/api/dividends", s.dividendsAPIHandler)
+	s.handleServiceFunc("/api/dividends", s.dividendsAPIHandler)
 	log.Printf("[SERVER] Route registered: /api/dividends -> dividendsAPIHandler")
 
-	http.HandleFunc("/api/long-positions", s.longPositionsAPIHandler)
+	s.handleServiceFunc("/api/long-positions", s.longPositionsAPIHandler)
 	log.Printf("[SERVER] Route registered: /api/long-positions -> longPositionsAPIHandler")
 
-	http.HandleFunc("/api/treasuries/", s.treasuryAPIHandler)
+	s.handleServiceFunc("/api/treasuries/", s.treasuryAPIHandler)
 	log.Printf("[SERVER] Route registered: /api/treasuries/ -> treasuryAPIHandler")
 
-	http.HandleFunc("/api/metrics", func(w http.ResponseWriter, r *http.Request) {
+	s.handleServiceFunc("/api/metrics", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			s.getMetricsHandler(w, r)
@@ -348,7 +458,7 @@ func (s *Server) setupRoutes() {
 	})
 	log.Printf("[SERVER] Route registered: /api/metrics -> metrics API handler")
 
-	http.HandleFunc("/api/metrics/", func(w http.ResponseWriter, r *http.Request) {
+	s.handleServiceFunc("/api/metrics/", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPut:
 			s.updateMetricHandler(w, r)
@@ -360,85 +470,91 @@ func (s *Server) setupRoutes() {
 	})
 	log.Printf("[SERVER] Route registered: /api/metrics/ -> individual metric API handler")
 
-	http.HandleFunc("/api/metrics/snapshot", s.createMetricsSnapshotHandler)
+	s.handleServiceFunc("/api/metrics/snapshot", s.createMetricsSnapshotHandler)
 	log.Printf("[SERVER] Route registered: /api/metrics/snapshot -> createMetricsSnapshotHandler")
 
-	http.HandleFunc("/api/metrics/chart-data", s.getMetricsChartDataHandler)
+	s.handleServiceFunc("/api/metrics/chart-data", s.getMetricsChartDataHandler)
 	log.Printf("[SERVER] Route registered: /api/metrics/chart-data -> getMetricsChartDataHandler")
 
-	http.HandleFunc("/add-option", s.addOptionHandler)
+	s.handleServiceFunc("/add-option", s.addOptionHandler)
 	log.Printf("[SERVER] Route registered: /add-option -> addOptionHandler")
 
-	http.HandleFunc("/add-treasury", s.addTreasuryHandler)
+	s.handleServiceFunc("/add-treasury", s.addTreasuryHandler)
 	log.Printf("[SERVER] Route registered: /add-treasury -> addTreasuryHandler")
 
-	http.HandleFunc("/api/allocation-data", s.allocationDataHandler)
+	s.handleServiceFunc("/api/allocation-data", s.allocationDataHandler)
 	log.Printf("[SERVER] Route registered: /api/allocation-data -> allocationDataHandler")
 
-	http.HandleFunc("/api/optionable-positions", s.optionablePositionsHandler)
+	s.handleServiceFunc("/api/optionable-positions", s.optionablePositionsHandler)
 	log.Printf("[SERVER] Route registered: /api/optionable-positions -> optionablePositionsHandler")
 
-	http.HandleFunc("/import", s.HandleImport)
+	s.handleServiceFunc("/import", s.HandleImport)
 	log.Printf("[SERVER] Route registered: /import -> HandleImport")
 
-	http.HandleFunc("/backup", s.HandleBackup)
+	s.handleServiceFunc("/backup", s.HandleBackup)
 	log.Printf("[SERVER] Route registered: /backup -> HandleBackup")
 
-	http.HandleFunc("/backup/", s.HandleBackupFile)
+	s.handleServiceFunc("/backup/", s.HandleBackupFile)
 	log.Printf("[SERVER] Route registered: /backup/ -> HandleBackupFile")
 
 	http.HandleFunc("/database/set-current", s.handleSetCurrentDatabase)
 	log.Printf("[SERVER] Route registered: /database/set-current -> handleSetCurrentDatabase")
 
-	http.HandleFunc("/database/create", s.handleCreateDatabase)
+	s.handleServiceFunc("/database/create", s.handleCreateDatabase)
 	log.Printf("[SERVER] Route registered: /database/create -> handleCreateDatabase")
 
-	http.HandleFunc("/database/delete/", s.handleDeleteDatabase)
+	s.handleServiceFunc("/database/delete/", s.handleDeleteDatabase)
 	log.Printf("[SERVER] Route registered: /database/delete/ -> handleDeleteDatabase")
 
 	http.Handle("/backups/", http.StripPrefix("/backups/", http.FileServer(http.Dir("./data/backups"))))
 	log.Printf("[SERVER] Route registered: /backups/ -> file server for backup directory")
 
-	http.HandleFunc("/import/upload", s.HandleImportUpload)
+	s.handleServiceFunc("/import/upload", s.HandleImportUpload)
 	log.Printf("[SERVER] Route registered: /import/upload -> HandleImportUpload")
 
-	http.HandleFunc("/import/upload/stocks", s.HandleStocksImportUpload)
+	s.handleServiceFunc("/import/upload/stocks", s.HandleStocksImportUpload)
 	log.Printf("[SERVER] Route registered: /import/upload/stocks -> HandleStocksImportUpload")
 
-	http.HandleFunc("/import/upload/dividends", s.HandleDividendsImportUpload)
+	s.handleServiceFunc("/import/upload/dividends", s.HandleDividendsImportUpload)
 	log.Printf("[SERVER] Route registered: /import/upload/dividends -> HandleDividendsImportUpload")
 
-	http.HandleFunc("/import/upload/treasuries", s.HandleTreasuriesImportUpload)
+	s.handleServiceFunc("/import/upload/treasuries", s.HandleTreasuriesImportUpload)
 	log.Printf("[SERVER] Route registered: /import/upload/treasuries -> HandleTreasuriesImportUpload")
 
-	http.HandleFunc("/api/generate-test-data", s.HandleGenerateTestData)
+	s.handleServiceFunc("/api/generate-test-data", s.HandleGenerateTestData)
 	log.Printf("[SERVER] Route registered: /api/generate-test-data -> HandleGenerateTestData")
 
-	http.HandleFunc("/help", s.helpHandler)
+	s.handleServiceFunc("/help", s.helpHandler)
 	log.Printf("[SERVER] Route registered: /help -> helpHandler")
 
-	http.HandleFunc("/settings", s.settingsHandler)
+	s.handleServiceFunc("/settings", s.settingsHandler)
 	log.Printf("[SERVER] Route registered: /settings -> settingsHandler")
 
-	http.HandleFunc("/api/settings", s.settingsAPIHandler)
+	s.handleServiceFunc("/api/settings", s.settingsAPIHandler)
 	log.Printf("[SERVER] Route registered: /api/settings -> settingsAPIHandler")
 
-	http.HandleFunc("/api/settings/", s.individualSettingAPIHandler)
+	s.handleServiceFunc("/api/settings/", s.individualSettingAPIHandler)
 	log.Printf("[SERVER] Route registered: /api/settings/ -> individualSettingAPIHandler")
 
-	http.HandleFunc("/api/provider/test", s.providerTestHandler)
+	s.handleServiceFunc("/api/provider/configuration", s.providerConfigurationAPIHandler)
+	log.Printf("[SERVER] Route registered: /api/provider/configuration -> providerConfigurationAPIHandler")
+
+	s.handleServiceFunc("/api/markets", s.marketsAPIHandler)
+	log.Printf("[SERVER] Route registered: /api/markets -> marketsAPIHandler")
+
+	s.handleServiceFunc("/api/provider/test", s.providerTestHandler)
 	log.Printf("[SERVER] Route registered: /api/provider/test -> providerTestHandler")
 
-	http.HandleFunc("/api/provider/update-prices", s.providerUpdatePricesHandler)
+	s.handleServiceFunc("/api/provider/update-prices", s.providerUpdatePricesHandler)
 	log.Printf("[SERVER] Route registered: /api/provider/update-prices -> providerUpdatePricesHandler")
 
-	http.HandleFunc("/api/provider/symbol-info/", s.providerSymbolInfoHandler)
+	s.handleServiceFunc("/api/provider/symbol-info/", s.providerSymbolInfoHandler)
 	log.Printf("[SERVER] Route registered: /api/provider/symbol-info/ -> providerSymbolInfoHandler")
 
-	http.HandleFunc("/api/provider/status", s.providerStatusHandler)
+	s.handleServiceFunc("/api/provider/status", s.providerStatusHandler)
 	log.Printf("[SERVER] Route registered: /api/provider/status -> providerStatusHandler")
 
-	http.HandleFunc("/api/provider/fetch-dividends", s.providerFetchDividendsHandler)
+	s.handleServiceFunc("/api/provider/fetch-dividends", s.providerFetchDividendsHandler)
 	log.Printf("[SERVER] Route registered: /api/provider/fetch-dividends -> providerFetchDividendsHandler")
 
 	log.Printf("[SERVER] All routes registered successfully")

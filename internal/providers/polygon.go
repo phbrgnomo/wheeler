@@ -19,6 +19,10 @@ func NewPolygonProvider(apiKey string) *PolygonProvider {
 	}
 }
 
+func newPolygonProviderForTest(client *polygon.Client) *PolygonProvider {
+	return &PolygonProvider{client: client}
+}
+
 // GetQuote retrieves the current or most recent quote for a symbol
 func (p *PolygonProvider) GetQuote(ctx context.Context, symbol string) (*Quote, error) {
 	polygonQuote, err := p.client.GetPreviousClose(ctx, symbol)
@@ -27,14 +31,13 @@ func (p *PolygonProvider) GetQuote(ctx context.Context, symbol string) (*Quote, 
 	}
 
 	return &Quote{
-		Symbol:        polygonQuote.Results.Symbol,
-		Price:         polygonQuote.Results.Price,
-		Open:          polygonQuote.Results.Open,
-		High:          polygonQuote.Results.High,
-		Low:           polygonQuote.Results.Low,
-		Volume:        polygonQuote.Results.Volume,
-		PreviousClose: polygonQuote.Results.PreviousClose,
-		Timestamp:     time.Unix(0, polygonQuote.Results.Timestamp*int64(time.Millisecond)),
+		Symbol:    polygonQuote.Results.Symbol,
+		Price:     polygonQuote.Results.Price,
+		Open:      polygonQuote.Results.Open,
+		High:      polygonQuote.Results.High,
+		Low:       polygonQuote.Results.Low,
+		Volume:    polygonQuote.Results.Volume,
+		Timestamp: time.Unix(0, polygonQuote.Results.Timestamp*int64(time.Millisecond)),
 	}, nil
 }
 

@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"stonks/internal/markets"
 	"stonks/internal/models"
 	"strconv"
 	"strings"
@@ -216,6 +217,7 @@ func (s *Server) symbolHandler(w http.ResponseWriter, r *http.Request) {
 		OptionsList:       optionsList,
 		LongPositionsList: longPositionsList,
 		MonthlyResults:    monthlyResults,
+		SupportsDividends: s.providerService.ActiveProfile().SupportsDividends,
 		CurrentDB:         s.getCurrentDatabaseName(),
 		ActivePage:        "symbol",
 	}
@@ -323,6 +325,12 @@ func (s *Server) updateSymbolHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Symbol is required", http.StatusBadRequest)
 		return
 	}
+	instrument, err := markets.Parse(symbol)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	symbol = instrument.Key()
 
 	var updateReq SymbolUpdateRequest
 	if err := json.NewDecoder(r.Body).Decode(&updateReq); err != nil {
@@ -336,7 +344,7 @@ func (s *Server) updateSymbolHandler(w http.ResponseWriter, r *http.Request) {
 		// If symbol doesn't exist, create it
 		existingSymbol, err = s.symbolService.Create(symbol)
 		if err != nil {
-			http.Error(w, "Failed to create symbol", http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
@@ -447,6 +455,11 @@ func (s *Server) symbolAPIHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(pathSegments) > 1 && pathSegments[1] == "qualify" {
+		s.symbolQualifyHandler(w, r, symbol)
+		return
+	}
+
 	// Handle different HTTP methods for symbol operations
 	switch r.Method {
 	case http.MethodPut:
@@ -456,6 +469,27 @@ func (s *Server) symbolAPIHandler(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) symbolQualifyHandler(w http.ResponseWriter, r *http.Request, symbol string) {
+	if r.Method != http.MethodPost && r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request struct {
+		Market string `json:"market"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	qualified, err := s.symbolService.QualifyLegacySymbol(symbol, request.Market)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(qualified)
 }
 
 // symbolDividendsHandler provides API data for symbol-specific dividends
@@ -505,10 +539,14 @@ func (s *Server) symbolUpdatePriceHandler(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// symbolFetchDividendsHandler fetches dividend data for a symbol from Polygon.io
+// symbolFetchDividendsHandler fetches dividend data for a symbol from the configured provider.
 func (s *Server) symbolFetchDividendsHandler(w http.ResponseWriter, r *http.Request, symbol string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.providerService.ActiveProfile().SupportsDividends {
+		http.Error(w, "The configured provider does not support dividend history", http.StatusConflict)
 		return
 	}
 

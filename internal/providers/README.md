@@ -26,15 +26,15 @@ type Provider interface {
 
 Google Finance is accessed through its public quote page because it does not
 provide a supported public REST API. It supports quotes and basic ticker
-details, but not dividend history. Set `DATA_PROVIDER_TYPE` to
-`google_finance` and optionally set `GOOGLE_FINANCE_EXCHANGE` (default:
-`NASDAQ`). Symbols can also include an explicit exchange, such as
-`NASDAQ:AAPL`.
+details, but not dividend history. Wheeler stores symbols as `MARKET:TICKER`,
+such as `BVMF:PETR4`, and resolves them to `PETR4:BVMF` for Google Finance. The
+legacy `GOOGLE_FINANCE_EXCHANGE` setting is not used for new symbols.
 
-The yfinance provider uses Yahoo Finance ticker symbols, such as `AAPL` or
-`PETR3.SA`, and calls Yahoo Finance's chart endpoint directly from Go. It does
-not require Python or an API key. Set `DATA_PROVIDER_TYPE` to `yfinance`.
-`YFINANCE_BASE_URL` can override the Yahoo endpoint for a proxy or tests.
+The yfinance provider receives the Yahoo Finance symbol resolved from Wheeler's
+canonical key, such as `AAPL` or `PETR4.SA`, and calls Yahoo Finance's chart
+endpoint directly from Go. It does not require Python or an API key. Set the `DATA_PROVIDER_TYPE` setting to
+`yfinance`. The `YFINANCE_BASE_URL` environment variable can override the Yahoo
+endpoint for a proxy or tests.
 
 ## Adding a New Provider
 
@@ -151,6 +151,7 @@ Rate limiting is enforced centrally in the service layer via the shared `waitFor
 
 - Polygon.io Free Tier: 5 requests/minute (enforced via the shared rate-limiting pipeline)
 - When adding a new provider, document its limits and either reuse the shared rate limiter or add provider-specific safeguards where necessary
+
 ## Error Handling
 
 Providers should wrap errors with context:

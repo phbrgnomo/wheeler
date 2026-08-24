@@ -45,6 +45,12 @@ func TestYFinanceProviderQuoteAndDetails(t *testing.T) {
 	}
 }
 
+func TestParseInt64RejectsTrailingCharacters(t *testing.T) {
+	if _, err := parseInt64("1723507200invalid"); err == nil {
+		t.Fatal("expected invalid epoch to be rejected")
+	}
+}
+
 func TestYFinanceProviderDividendsNewestFirstAndLimited(t *testing.T) {
 	provider := newYFinanceProviderForTest(&http.Client{Transport: yahooRoundTripper{body: yahooChartFixture}}, "http://yahoo.test")
 	dividends, err := provider.GetDividends(context.Background(), "AAPL", 1)
