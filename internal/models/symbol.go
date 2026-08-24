@@ -85,6 +85,7 @@ type Option struct {
 	ID           int        `json:"id"`
 	Symbol       string     `json:"symbol"`
 	Type         string     `json:"type"`
+	Direction    string     `json:"direction"`
 	Opened       time.Time  `json:"opened"`
 	Closed       *time.Time `json:"closed"`
 	Strike       float64    `json:"strike"`
@@ -139,11 +140,29 @@ func (o *Option) CalculateTotalProfit() float64 {
 	if o.ExitPrice != nil {
 		exitPrice = *o.ExitPrice
 	}
-	profit := math.Floor((o.Premium - exitPrice) * float64(o.Contracts) * 100)
+	profitPerContract := o.Premium - exitPrice
+	if o.Direction == "Long" {
+		profitPerContract = exitPrice - o.Premium
+	}
+	profit := math.Floor(profitPerContract * float64(o.Contracts) * 100)
 	return profit - o.Commission // Subtract commission for accurate net profit
 }
 
+// IsLong reports whether the option was bought. Empty direction is treated as
+// Short for compatibility with options created before direction was introduced.
+func (o *Option) IsLong() bool { return o.Direction == "Long" }
+
+func (o *Option) IsShort() bool { return !o.IsLong() }
+
+// HasPerformanceMetrics reports whether the wheel-oriented percentage metrics
+// are meaningful for this option. Long options intentionally do not expose
+// those metrics because their maximum profit is not bounded by entry credit.
+func (o *Option) HasPerformanceMetrics() bool { return o.IsShort() }
+
 func (o *Option) CalculatePercentOfProfit() float64 {
+	if !o.HasPerformanceMetrics() {
+		return 0
+	}
 	if o.Premium == 0 {
 		return 0
 	}
@@ -196,6 +215,9 @@ func (o *Option) CalculateMultiplier() float64 {
 // CalculateAROI calculates the Annualized Return on Investment (AROI) for the option
 // This extrapolates the profit to an annual basis based on time in trade
 func (o *Option) CalculateAROI() float64 {
+	if !o.HasPerformanceMetrics() {
+		return 0
+	}
 	// Calculate days the trade has been active
 	var endDate time.Time
 	if o.Closed == nil {

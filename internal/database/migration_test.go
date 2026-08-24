@@ -94,6 +94,7 @@ func TestMigrationSystem(t *testing.T) {
 			"idx_options_symbol",
 			"idx_options_expiration",
 			"idx_options_type",
+			"idx_options_direction",
 			"idx_dividends_symbol",
 			"idx_dividends_received",
 			"idx_treasuries_maturity",
@@ -127,6 +128,34 @@ func TestMigrationSystem(t *testing.T) {
 		}
 	})
 
+	t.Run("options table has direction column", func(t *testing.T) {
+		var count int
+		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('options') WHERE name='direction'").Scan(&count); err != nil || count != 1 {
+			t.Fatalf("expected options.direction column, count=%d err=%v", count, err)
+		}
+	})
+
+	t.Run("option direction defaults to Short and permits opposite legs", func(t *testing.T) {
+		if _, err := db.Exec("INSERT INTO symbols (symbol) VALUES ('NASDAQ:SPREAD')"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO options (symbol, type, opened, strike, expiration, premium, contracts)
+			VALUES ('NASDAQ:SPREAD', 'Put', '2026-08-01', 100, '2026-09-01', 2, 1)`); err != nil {
+			t.Fatal(err)
+		}
+		var direction string
+		if err := db.QueryRow("SELECT direction FROM options WHERE symbol = 'NASDAQ:SPREAD'").Scan(&direction); err != nil {
+			t.Fatal(err)
+		}
+		if direction != "Short" {
+			t.Fatalf("default direction = %q", direction)
+		}
+		if _, err := db.Exec(`INSERT INTO options (symbol, type, direction, opened, strike, expiration, premium, contracts)
+			VALUES ('NASDAQ:SPREAD', 'Put', 'Long', '2026-08-01', 100, '2026-09-01', 2, 1)`); err != nil {
+			t.Fatalf("opposite spread leg should be allowed: %v", err)
+		}
+	})
+
 	t.Run("migrations are idempotent", func(t *testing.T) {
 		// Run migrations again - should not fail
 		err := db.runMigrations()
@@ -140,8 +169,8 @@ func TestMigrationSystem(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to query schema_migrations: %v", err)
 		}
-		if count != 3 {
-			t.Errorf("Expected 3 migration records after re-running migrations, got %d", count)
+		if count != 4 {
+			t.Errorf("Expected 4 migration records after re-running migrations, got %d", count)
 		}
 	})
 }

@@ -379,7 +379,7 @@ func (ms *MetricService) calculatePutExposureForDate(date time.Time) (float64, e
 		FROM options 
 		WHERE date(opened) <= date(?) 
 		AND (closed IS NULL OR date(closed) > date(?))
-		AND type = 'Put'
+		AND type = 'Put' AND (direction IS NULL OR direction = '' OR direction = 'Short')
 	`
 
 	dateStr := date.Format("2006-01-02")
@@ -402,7 +402,7 @@ func (ms *MetricService) calculateOpenPutPremiumForDate(date time.Time) (float64
 		FROM options 
 		WHERE date(opened) <= date(?) 
 		AND (closed IS NULL OR date(closed) > date(?))
-		AND type = 'Put'
+		AND type = 'Put' AND (direction IS NULL OR direction = '' OR direction = 'Short')
 	`
 
 	dateStr := date.Format("2006-01-02")
@@ -424,7 +424,7 @@ func (ms *MetricService) calculateOpenPutCountForDate(date time.Time) (float64, 
 		FROM options 
 		WHERE date(opened) <= date(?) 
 		AND (closed IS NULL OR date(closed) > date(?))
-		AND type = 'Put'
+		AND type = 'Put' AND (direction IS NULL OR direction = '' OR direction = 'Short')
 	`
 
 	dateStr := date.Format("2006-01-02")
@@ -447,7 +447,7 @@ func (ms *MetricService) calculateOpenCallPremiumForDate(date time.Time) (float6
 		FROM options 
 		WHERE date(opened) <= date(?) 
 		AND (closed IS NULL OR date(closed) > date(?))
-		AND type = 'Call'
+		AND type = 'Call' AND (direction IS NULL OR direction = '' OR direction = 'Short')
 	`
 
 	dateStr := date.Format("2006-01-02")
@@ -469,7 +469,7 @@ func (ms *MetricService) calculateOpenCallCountForDate(date time.Time) (float64,
 		FROM options 
 		WHERE date(opened) <= date(?) 
 		AND (closed IS NULL OR date(closed) > date(?))
-		AND type = 'Call'
+		AND type = 'Call' AND (direction IS NULL OR direction = '' OR direction = 'Short')
 	`
 
 	dateStr := date.Format("2006-01-02")

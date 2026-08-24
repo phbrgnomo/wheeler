@@ -196,12 +196,12 @@
                                         {{$putExposed := 0.0}}
                                         {{$totalPremium := 0.0}}
                                         {{range .Positions}}
-                                            {{if eq .Type "Call"}}
+                                                {{if eq .Type "Call"}}
                                                 {{$callCount = add $callCount 1}}
                                                 {{$callNominal = add $callNominal (mul (mul .Strike .Contracts) 100)}}
                                             {{else}}
                                                 {{$putCount = add $putCount 1}}
-                                                {{$putExposed = add $putExposed (mul (mul .Strike .Contracts) 100)}}
+                                                {{if .IsShort}}{{$putExposed = add $putExposed (mul (mul .Strike .Contracts) 100)}}{{end}}
                                             {{end}}
                                             {{$totalPremium = add $totalPremium .CalculateTotalProfit}}
                                         {{end}}
@@ -243,6 +243,7 @@
                                             <tr>
                                                 <th>Symbol</th>
                                                 <th>Type</th>
+                                                <th>Position</th>
                                                 <th>Strike</th>
                                                 <th>Quantity</th>
                                                 <th>Nominal</th>
@@ -259,6 +260,7 @@
                                                         {{if eq .Type "Put"}}P{{else}}C{{end}}
                                                     </span>
                                                 </td>
+                                                <td><span class="{{if .IsLong}}negative{{else}}positive{{end}}">{{.Direction}}</span></td>
                                                 <td class="neutral-currency">${{printf "%.2f" .Strike}}</td>
                                                 <td>{{.Contracts}}</td>
                                                 <td class="neutral-currency">{{formatCurrency (mul (mul .Strike .Contracts) 100)}}</td>

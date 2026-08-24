@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +46,37 @@ func TestProviderSettingValidation(t *testing.T) {
 	server.updateSettingAPI(recorder, request, "DATA_PROVIDER_TYPE")
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid provider to be rejected, got %d", recorder.Code)
+	}
+}
+
+func TestOptionAPIStoresLongDirection(t *testing.T) {
+	server, _ := newProviderTestServer(t, "long-option")
+	if _, err := server.symbolService.Create("NASDAQ:AAPL"); err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/options", strings.NewReader(`{"symbol":"NASDAQ:AAPL","type":"Put","direction":"Long","opened":"2026-08-01","strike":100,"expiration":"2026-09-01","premium":2,"contracts":1,"commission":0.65}`))
+	recorder := httptest.NewRecorder()
+	server.optionAPIHandler(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("create long option = %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var option struct {
+		ID        int    `json:"id"`
+		Direction string `json:"direction"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&option); err != nil {
+		t.Fatal(err)
+	}
+	if option.Direction != "Long" {
+		t.Fatalf("direction = %q", option.Direction)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/options/"+strconv.Itoa(option.ID), nil)
+	recorder = httptest.NewRecorder()
+	server.individualOptionAPIHandler(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("get long option = %d: %s", recorder.Code, recorder.Body.String())
 	}
 }
 
